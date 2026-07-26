@@ -304,8 +304,9 @@ const demoQsos: Qso[] = [
 ];
 
 const demoHome = { lat: 47.6062, lon: -122.3321 };
-const MAX_MAP_ZOOM = 1024;
+const MAX_MAP_ZOOM = 131072;
 const MAP_ZOOM_FACTOR = 1.5;
+const OSM_MAX_ZOOM = 19;
 
 function project({ lat, lon }: Coordinates) {
   return { x: ((lon + 180) / 360) * 1000, y: ((90 - lat) / 180) * 500 };
@@ -313,6 +314,27 @@ function project({ lat, lon }: Coordinates) {
 
 function nearestWrappedX(x: number, centerX: number) {
   return x + Math.round((centerX - x) / 1000) * 1000;
+}
+
+function mercatorY(latitude: number) {
+  const clamped = Math.max(-85.05112878, Math.min(85.05112878, latitude));
+  const radians = (clamped * Math.PI) / 180;
+  return (
+    (1 -
+      Math.log(Math.tan(radians) + 1 / Math.cos(radians)) / Math.PI) /
+    2
+  );
+}
+
+function mercatorX(longitude: number) {
+  return (longitude + 180) / 360;
+}
+
+function inverseMercatorY(y: number) {
+  return (
+    (Math.atan(Math.sinh(Math.PI * (1 - 2 * y))) * 180) /
+    Math.PI
+  );
 }
 
 function gridToCoordinates(gridValue: string): Coordinates | null {
@@ -545,13 +567,17 @@ function standaloneApp() {
   ).__QSO_PAYLOAD__;
   const svg = document.getElementById("map-points") as unknown as SVGElement;
   const mapSvg = document.getElementById("standalone-map") as unknown as SVGSVGElement;
+  const mapStage = document.getElementById("standalone-map-stage") as HTMLElement;
+  const tileLayer = document.getElementById("standalone-tiles") as HTMLElement;
+  const tileOverlay = document.getElementById("standalone-tile-overlay") as unknown as SVGSVGElement;
   const list = document.getElementById("qso-list") as HTMLElement;
   const resultCount = document.getElementById("result-count") as HTMLElement;
   const band = document.getElementById("band") as HTMLSelectElement;
   const mode = document.getElementById("mode") as HTMLSelectElement;
   const search = document.getElementById("search") as HTMLInputElement;
   const namespace = "http://www.w3.org/2000/svg";
-  const maxMapZoom = 1024;
+  const maxMapZoom = 131072;
+  const osmMaxZoom = 19;
   const zoomFactor = 1.5;
   let mapZoom = 1;
   let mapCenter = payload.home
@@ -565,10 +591,9 @@ function standaloneApp() {
         pointerId: number;
         clientX: number;
         clientY: number;
-        centerX: number;
-        centerY: number;
-        unitsX: number;
-        unitsY: number;
+        centerMercatorX: number;
+        centerMercatorY: number;
+        worldSize: number;
       }
     | null = null;
 
@@ -582,6 +607,18 @@ function standaloneApp() {
     x: ((lon + 180) / 360) * 1000,
     y: ((90 - lat) / 180) * 500,
   });
+  const mercX = (longitude: number) => (longitude + 180) / 360;
+  const mercY = (latitude: number) => {
+    const clamped = Math.max(-85.05112878, Math.min(85.05112878, latitude));
+    const radians = (clamped * Math.PI) / 180;
+    return (
+      (1 -
+        Math.log(Math.tan(radians) + 1 / Math.cos(radians)) / Math.PI) /
+      2
+    );
+  };
+  const inverseMercY = (y: number) =>
+    (Math.atan(Math.sinh(Math.PI * (1 - 2 * y))) * 180) / Math.PI;
   const wrappedPoint = (lat: number, lon: number) => {
     const projected = point(lat, lon);
     const referenceX = payload.home
@@ -620,6 +657,144 @@ function standaloneApp() {
       String(6 / mapZoom),
     );
   };
+  let visibleQsos = payload.qsos;
+  const renderTileMap = (filtered: Qso[]) => {
+    visibleQsos = filtered;
+    const width = mapStage.clientWidth;
+    const height = mapStage.clientHeight;
+    if (!width || !height) return;
+    const worldSize = width * mapZoom;
+    const tileZoom = Math.max(
+      0,
+      Math.min(
+        osmMaxZoom,
+        Math.floor(Math.log2(Math.max(1, worldSize / 256))),
+      ),
+    );
+    const tileCount = 2 ** tileZoom;
+    const tileSize = worldSize / tileCount;
+    const centerLongitude = (mapCenter.x / 1000) * 360 - 180;
+    const centerLatitude = 90 - (mapCenter.y / 500) * 180;
+    const centerWorldX = mercX(centerLongitude) * worldSize;
+    const centerWorldY = mercY(centerLatitude) * worldSize;
+    const firstTileX = Math.floor((centerWorldX - width / 2) / tileSize);
+    const lastTileX = Math.floor((centerWorldX + width / 2) / tileSize);
+    const firstTileY = Math.max(
+      0,
+      Math.floor((centerWorldY - height / 2) / tileSize),
+    );
+    const lastTileY = Math.min(
+      tileCount - 1,
+      Math.floor((centerWorldY + height / 2) / tileSize),
+    );
+    const fragment = document.createDocumentFragment();
+    for (let x = firstTileX; x <= lastTileX; x += 1) {
+      for (let y = firstTileY; y <= lastTileY; y += 1) {
+        const image = document.createElement("img");
+        const wrappedX = ((x % tileCount) + tileCount) % tileCount;
+        image.alt = "";
+        image.draggable = false;
+        image.src = `https://tile.openstreetmap.org/${tileZoom}/${wrappedX}/${y}.png`;
+        image.style.left = `${x * tileSize - centerWorldX + width / 2}px`;
+        image.style.top = `${y * tileSize - centerWorldY + height / 2}px`;
+        image.style.width = `${tileSize + 0.5}px`;
+        image.style.height = `${tileSize + 0.5}px`;
+        image.addEventListener("load", () =>
+          mapSvg.classList.add("tiles-loaded"),
+        );
+        image.addEventListener("error", () => {
+          image.style.display = "none";
+        });
+        fragment.append(image);
+      }
+    }
+    tileLayer.replaceChildren(fragment);
+    tileOverlay.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    tileOverlay.replaceChildren();
+    const screenPoint = (coordinates: Coordinates) => {
+      let deltaX = mercX(coordinates.lon) - mercX(centerLongitude);
+      deltaX -= Math.round(deltaX);
+      return {
+        x: width / 2 + deltaX * worldSize,
+        y:
+          height / 2 +
+          (mercY(coordinates.lat) - mercY(centerLatitude)) * worldSize,
+      };
+    };
+    const origin = payload.home ? screenPoint(payload.home) : null;
+    if (origin && mapZoom < 96) {
+      for (const qso of filtered) {
+        const destination = screenPoint(qso);
+        const line = document.createElementNS(namespace, "path");
+        const middleX = (origin.x + destination.x) / 2;
+        const lift = Math.min(
+          90,
+          Math.abs(destination.x - origin.x) * 0.12,
+        );
+        line.setAttribute(
+          "d",
+          `M${origin.x},${origin.y} Q${middleX},${Math.min(origin.y, destination.y) - lift} ${destination.x},${destination.y}`,
+        );
+        line.setAttribute("class", "arc");
+        tileOverlay.append(line);
+      }
+    }
+    if (origin) {
+      const homeMarker = document.createElementNS(namespace, "circle");
+      homeMarker.setAttribute("cx", String(origin.x));
+      homeMarker.setAttribute("cy", String(origin.y));
+      homeMarker.setAttribute("r", "6");
+      homeMarker.setAttribute("class", "origin screen-marker");
+      tileOverlay.append(homeMarker);
+    }
+    for (const qso of filtered) {
+      const location = screenPoint(qso);
+      if (
+        location.x < -30 ||
+        location.x > width + 30 ||
+        location.y < -30 ||
+        location.y > height + 30
+      ) {
+        continue;
+      }
+      const marker = document.createElementNS(namespace, "circle");
+      marker.setAttribute("cx", String(location.x));
+      marker.setAttribute("cy", String(location.y));
+      marker.setAttribute("r", "5");
+      marker.setAttribute(
+        "class",
+        `marker screen-marker${qso.locatorSource === "entity" ? " estimated" : ""}`,
+      );
+      marker.setAttribute("tabindex", "0");
+      marker.setAttribute("role", "button");
+      marker.setAttribute("aria-label", `${qso.call}, ${qso.country}`);
+      const select = () => {
+        tileOverlay
+          .querySelectorAll(".marker")
+          .forEach((item) => item.classList.remove("active"));
+        marker.classList.add("active");
+        const detail = document.getElementById("detail") as HTMLElement;
+        detail.innerHTML = `<strong>${safe(qso.call)}</strong><span>${safe(qso.country)} · ${safe(qso.band)} · ${safe(qso.mode)} · ${safe(qso.date)} · ${safe(locationText(qso))}</span>`;
+      };
+      marker.addEventListener("mouseenter", select);
+      marker.addEventListener("focus", select);
+      marker.addEventListener("pointerdown", (event) => event.stopPropagation());
+      marker.addEventListener("click", () => {
+        select();
+        centerQso(qso);
+      });
+      marker.addEventListener("keydown", (event) => {
+        const key = (event as unknown as { key: string }).key;
+        if (key === "Enter" || key === " ") {
+          select();
+          centerQso(qso);
+        }
+      });
+      tileOverlay.append(marker);
+    }
+    const attribution = document.getElementById("osm-attribution");
+    if (attribution) attribution.dataset.zoom = String(tileZoom);
+  };
   const updateView = () => {
     mapCenter = clampCenter(mapCenter);
     const width = 1000 / mapZoom;
@@ -631,14 +806,7 @@ function standaloneApp() {
     const zoomLabel = document.getElementById("standalone-zoom-label");
     if (zoomLabel) zoomLabel.textContent = `${Math.round(mapZoom * 100)}%`;
     updateMarkerSizes();
-  };
-  const mapPointFromEvent = (event: globalThis.MouseEvent) => {
-    const matrix = mapSvg.getScreenCTM();
-    if (!matrix) return mapCenter;
-    const cursor = mapSvg.createSVGPoint();
-    cursor.x = event.clientX;
-    cursor.y = event.clientY;
-    return cursor.matrixTransform(matrix.inverse());
+    renderTileMap(visibleQsos);
   };
   const centerQso = (qso: Qso) => {
     mapZoom = Math.max(mapZoom, 2);
@@ -648,33 +816,52 @@ function standaloneApp() {
 
   mapSvg.addEventListener("dblclick", (event) => {
     event.preventDefault();
-    const destination = mapPointFromEvent(event);
+    const bounds = mapSvg.getBoundingClientRect();
+    const centerLongitude = (mapCenter.x / 1000) * 360 - 180;
+    const centerLatitude = 90 - (mapCenter.y / 500) * 180;
+    const worldSize = bounds.width * mapZoom;
+    const destination = point(
+      inverseMercY(
+        mercY(centerLatitude) +
+          (event.clientY - bounds.top - bounds.height / 2) / worldSize,
+      ),
+      (mercX(centerLongitude) +
+        (event.clientX - bounds.left - bounds.width / 2) / worldSize) *
+        360 -
+        180,
+    );
     mapZoom = Math.min(maxMapZoom, mapZoom * zoomFactor);
     mapCenter = destination;
     updateView();
   });
   mapSvg.addEventListener("pointerdown", (event) => {
     if (mapZoom <= 1) return;
-    const matrix = mapSvg.getScreenCTM();
-    if (!matrix) return;
+    const bounds = mapSvg.getBoundingClientRect();
+    const centerLongitude = (mapCenter.x / 1000) * 360 - 180;
+    const centerLatitude = 90 - (mapCenter.y / 500) * 180;
     drag = {
       pointerId: event.pointerId,
       clientX: event.clientX,
       clientY: event.clientY,
-      centerX: mapCenter.x,
-      centerY: mapCenter.y,
-      unitsX: 1 / Math.hypot(matrix.a, matrix.b),
-      unitsY: 1 / Math.hypot(matrix.c, matrix.d),
+      centerMercatorX: mercX(centerLongitude),
+      centerMercatorY: mercY(centerLatitude),
+      worldSize: bounds.width * mapZoom,
     };
     mapSvg.setPointerCapture(event.pointerId);
     mapSvg.classList.add("dragging");
   });
   mapSvg.addEventListener("pointermove", (event) => {
     if (!drag || drag.pointerId !== event.pointerId) return;
-    mapCenter = {
-      x: drag.centerX - (event.clientX - drag.clientX) * drag.unitsX,
-      y: drag.centerY - (event.clientY - drag.clientY) * drag.unitsY,
-    };
+    mapCenter = point(
+      inverseMercY(
+        drag.centerMercatorY -
+          (event.clientY - drag.clientY) / drag.worldSize,
+      ),
+      (drag.centerMercatorX -
+        (event.clientX - drag.clientX) / drag.worldSize) *
+        360 -
+        180,
+    );
     updateView();
   });
   const finishDrag = (event: globalThis.PointerEvent) => {
@@ -803,12 +990,14 @@ function standaloneApp() {
     });
     resultCount.textContent = `${filtered.length} mapped QSO${filtered.length === 1 ? "" : "s"}`;
     updateMarkerSizes();
+    renderTileMap(filtered);
   };
 
   [band, mode].forEach((element) => element.addEventListener("change", render));
   search.addEventListener("input", render);
   render();
   updateView();
+  globalThis.addEventListener("resize", () => renderTileMap(visibleQsos));
 }
 
 function buildStandaloneHtml(
@@ -859,7 +1048,7 @@ function buildStandaloneHtml(
 <meta name="color-scheme" content="dark">
 <title>${escapeHtml(sourceName)} · QSO Atlas</title>
 <style>
-:root{--ink:#f2f0e8;--muted:#9ca7aa;--panel:#111a1e;--line:#26343a;--ocean:#0b1418;--land:#1c2b2f;--amber:#f0b45a;--cyan:#73c9c9}*{box-sizing:border-box}body{margin:0;background:#091115;color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:18px 28px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:18px;letter-spacing:.04em}header p{margin:2px 0 0;color:var(--muted)}.mark{display:flex;align-items:center;gap:12px}.pulse{width:12px;height:12px;border:2px solid var(--amber);border-radius:50%;box-shadow:0 0 0 5px rgba(240,180,90,.12)}.controls{display:flex;flex-wrap:wrap;gap:10px;padding:14px 28px;border-bottom:1px solid var(--line)}input,select{min-height:38px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:0 12px}input{min-width:220px}.count{margin-left:auto;align-self:center;color:var(--muted)}main{display:grid;grid-template-columns:minmax(0,1fr) 310px;min-height:calc(100vh - 132px)}.map{position:relative;min-height:580px;background:var(--ocean);overflow:hidden}.map svg{display:block;width:100%;height:100%;min-height:580px;cursor:grab;touch-action:none;user-select:none}.map svg.dragging{cursor:grabbing}.graticule{stroke:#233239;stroke-width:.55;vector-effect:non-scaling-stroke}.land{fill:var(--land);stroke:#33474d;stroke-width:.55;vector-effect:non-scaling-stroke}.arc{fill:none;stroke:var(--amber);stroke-width:1;stroke-opacity:.28;vector-effect:non-scaling-stroke}.marker{fill:var(--amber);stroke:#fff2d7;stroke-width:1.4;cursor:pointer;transition:stroke-width .15s;vector-effect:non-scaling-stroke}.marker.estimated{fill:var(--cyan);stroke-dasharray:2 1}.marker:hover,.marker:focus,.marker.active{stroke-width:2.4;outline:none}.origin{fill:var(--cyan);stroke:#dff;stroke-width:2;vector-effect:non-scaling-stroke}.mapbuttons{position:absolute;display:grid;z-index:3;top:16px;right:16px;overflow:hidden;border:1px solid var(--line);border-radius:5px;background:rgba(9,17,21,.92)}.mapbuttons button{min-width:44px;height:34px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink)}.mapbuttons button:last-child{border:0}.detail{position:absolute;left:20px;bottom:20px;display:flex;gap:14px;align-items:center;max-width:calc(100% - 40px);padding:12px 15px;border:1px solid #3a4c52;border-radius:8px;background:rgba(9,17,21,.92)}.detail span{color:var(--muted)}aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto}.row{display:grid;width:100%;grid-template-columns:1.2fr 1.6fr .7fr .7fr;gap:8px;padding:13px 16px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);text-align:left;cursor:pointer}.row:hover{background:#18252a}.row span{overflow:hidden;color:var(--muted);text-overflow:ellipsis;white-space:nowrap}@media(max-width:760px){header{align-items:flex-start;padding:16px 18px}.controls{padding:12px 18px}.count{width:100%;margin-left:0}main{grid-template-columns:1fr}.map,.map svg{min-height:430px}aside{max-height:360px;border-top:1px solid var(--line);border-left:0}}
+:root{--ink:#f2f0e8;--muted:#9ca7aa;--panel:#111a1e;--line:#26343a;--ocean:#0b1418;--land:#1c2b2f;--amber:#f0b45a;--cyan:#73c9c9}*{box-sizing:border-box}body{margin:0;background:#091115;color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:18px 28px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:18px;letter-spacing:.04em}header p{margin:2px 0 0;color:var(--muted)}.mark{display:flex;align-items:center;gap:12px}.pulse{width:12px;height:12px;border:2px solid var(--amber);border-radius:50%;box-shadow:0 0 0 5px rgba(240,180,90,.12)}.controls{display:flex;flex-wrap:wrap;gap:10px;padding:14px 28px;border-bottom:1px solid var(--line)}input,select{min-height:38px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:0 12px}input{min-width:220px}.count{margin-left:auto;align-self:center;color:var(--muted)}main{display:grid;grid-template-columns:minmax(0,1fr) 310px;min-height:calc(100vh - 132px)}.map{position:relative;min-height:580px;background:var(--ocean);overflow:hidden}.map svg{display:block;width:100%;height:100%;min-height:580px;cursor:grab;touch-action:none;user-select:none}.map svg.dragging{cursor:grabbing}.graticule{stroke:#233239;stroke-width:.55;vector-effect:non-scaling-stroke}.land{fill:var(--land);stroke:#33474d;stroke-width:.55;vector-effect:non-scaling-stroke}.arc{fill:none;stroke:var(--amber);stroke-width:1;stroke-opacity:.28;vector-effect:non-scaling-stroke}.marker{fill:var(--amber);stroke:#fff2d7;stroke-width:1.4;cursor:pointer;transition:stroke-width .15s;vector-effect:non-scaling-stroke}.marker.estimated{fill:var(--cyan);stroke-dasharray:2 1}.marker:hover,.marker:focus,.marker.active{stroke-width:2.4;outline:none}.origin{fill:var(--cyan);stroke:#dff;stroke-width:2;vector-effect:non-scaling-stroke}.tiles-loaded .graticule,.tiles-loaded .land,.tiles-loaded .arc,.tiles-loaded .marker,.tiles-loaded .origin{visibility:hidden}.tile-layer,#standalone-tile-overlay{position:absolute;inset:0}.tile-layer{z-index:1;overflow:hidden;pointer-events:none}.tile-layer img{position:absolute;display:block;max-width:none;border:0;user-select:none}#standalone-tile-overlay{z-index:2;width:100%;height:100%;min-height:0;overflow:visible;pointer-events:none}.screen-marker{pointer-events:auto}.attribution{position:absolute;z-index:4;right:7px;bottom:5px;padding:2px 5px;border-radius:2px;background:rgba(255,255,255,.82);color:#1e2a2d;font-size:9px;pointer-events:auto}.attribution a{color:#174a69}.mapbuttons{position:absolute;display:grid;z-index:5;top:16px;right:16px;overflow:hidden;border:1px solid var(--line);border-radius:5px;background:rgba(9,17,21,.92)}.mapbuttons button{min-width:44px;height:34px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink)}.mapbuttons button:last-child{border:0}.detail{position:absolute;z-index:4;left:20px;bottom:20px;display:flex;gap:14px;align-items:center;max-width:calc(100% - 40px);padding:12px 15px;border:1px solid #3a4c52;border-radius:8px;background:rgba(9,17,21,.92)}.detail span{color:var(--muted)}aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto}.row{display:grid;width:100%;grid-template-columns:1.2fr 1.6fr .7fr .7fr;gap:8px;padding:13px 16px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);text-align:left;cursor:pointer}.row:hover{background:#18252a}.row span{overflow:hidden;color:var(--muted);text-overflow:ellipsis;white-space:nowrap}@media(max-width:760px){header{align-items:flex-start;padding:16px 18px}.controls{padding:12px 18px}.count{width:100%;margin-left:0}main{grid-template-columns:1fr}.map,.map svg{min-height:430px}aside{max-height:360px;border-top:1px solid var(--line);border-left:0}}
 </style>
 </head>
 <body>
@@ -871,24 +1060,246 @@ function buildStandaloneHtml(
 <span class="count" id="result-count"></span>
 </section>
 <main>
-<section class="map" aria-label="World map of radio contacts">
+<section class="map" id="standalone-map-stage" aria-label="World map of radio contacts">
 <svg id="standalone-map" viewBox="${mapCenterX - 500} 0 1000 500" preserveAspectRatio="xMidYMin meet" role="img" aria-label="World map with QSO paths">
 ${[-1000, 0, 1000].map((offset) => `<g transform="translate(${offset} 0)"><g class="graticule">${[-120, -60, 0, 60, 120].map((lon) => `<line x1="${((lon + 180) / 360) * 1000}" y1="0" x2="${((lon + 180) / 360) * 1000}" y2="500"/>`).join("")}${[-60, -30, 0, 30, 60].map((lat) => `<line x1="0" y1="${((90 - lat) / 180) * 500}" x2="1000" y2="${((90 - lat) / 180) * 500}"/>`).join("")}</g><path class="land" d="${worldPath}"/></g>`).join("")}
 ${home ? `<circle class="origin" cx="${project(home).x}" cy="${project(home).y}" r="6"/>` : ""}
 <g id="map-points">${staticArcs}${staticMarkers}</g>
 </svg>
+<div class="tile-layer" id="standalone-tiles"></div>
+<svg id="standalone-tile-overlay" aria-label="QSO markers over OpenStreetMap"></svg>
 <div class="mapbuttons" aria-label="Map zoom">
 <button id="standalone-zoom-in" type="button" aria-label="Zoom in">+</button>
 <button id="standalone-zoom-reset" type="button" aria-label="Reset map"><span id="standalone-zoom-label">100%</span></button>
 <button id="standalone-zoom-out" type="button" aria-label="Zoom out">−</button>
 </div>
 <div class="detail" id="detail"><strong>Select a QSO</strong><span>Use the map or contact list</span></div>
+<div class="attribution" id="osm-attribution">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors</div>
 </section>
 <aside id="qso-list" aria-label="QSO list"></aside>
 </main>
 <script>window.__QSO_PAYLOAD__=${payload};(${standaloneApp.toString()})()</script>
 </body>
 </html>`;
+}
+
+function OsmTileLayer({
+  qsos,
+  home,
+  center,
+  zoom,
+  selected,
+  onSelect,
+  onHover,
+  onLeave,
+  onReady,
+}: {
+  qsos: Qso[];
+  home: Coordinates | null;
+  center: { x: number; y: number };
+  zoom: number;
+  selected: Qso | null;
+  onSelect: (qso: Qso) => void;
+  onHover: (
+    qso: Qso,
+    event: MouseEvent<SVGGElement> | FocusEvent<SVGGElement>,
+  ) => void;
+  onLeave: () => void;
+  onReady: () => void;
+}) {
+  const layerRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const layer = layerRef.current;
+    if (!layer) return;
+    const update = () =>
+      setSize({ width: layer.clientWidth, height: layer.clientHeight });
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(layer);
+    return () => observer.disconnect();
+  }, []);
+
+  const geometry = useMemo(() => {
+    if (!size.width || !size.height) {
+      return { tiles: [], points: [], homePoint: null, tileZoom: 0 };
+    }
+    const worldSize = size.width * zoom;
+    const tileZoom = Math.max(
+      0,
+      Math.min(
+        OSM_MAX_ZOOM,
+        Math.floor(Math.log2(Math.max(1, worldSize / 256))),
+      ),
+    );
+    const tileCount = 2 ** tileZoom;
+    const tileSize = worldSize / tileCount;
+    const centerLongitude = (center.x / 1000) * 360 - 180;
+    const centerLatitude = 90 - (center.y / 500) * 180;
+    const centerWorldX = mercatorX(centerLongitude) * worldSize;
+    const centerWorldY = mercatorY(centerLatitude) * worldSize;
+    const firstTileX = Math.floor(
+      (centerWorldX - size.width / 2) / tileSize,
+    );
+    const lastTileX = Math.floor(
+      (centerWorldX + size.width / 2) / tileSize,
+    );
+    const firstTileY = Math.max(
+      0,
+      Math.floor((centerWorldY - size.height / 2) / tileSize),
+    );
+    const lastTileY = Math.min(
+      tileCount - 1,
+      Math.floor((centerWorldY + size.height / 2) / tileSize),
+    );
+    const tiles: {
+      key: string;
+      url: string;
+      left: number;
+      top: number;
+      size: number;
+    }[] = [];
+    for (let x = firstTileX; x <= lastTileX; x += 1) {
+      for (let y = firstTileY; y <= lastTileY; y += 1) {
+        const wrappedX = ((x % tileCount) + tileCount) % tileCount;
+        tiles.push({
+          key: `${tileZoom}/${x}/${y}`,
+          url: `https://tile.openstreetmap.org/${tileZoom}/${wrappedX}/${y}.png`,
+          left: x * tileSize - centerWorldX + size.width / 2,
+          top: y * tileSize - centerWorldY + size.height / 2,
+          size: tileSize + 0.5,
+        });
+      }
+    }
+
+    const screenPoint = (coordinates: Coordinates) => {
+      let deltaX = mercatorX(coordinates.lon) - mercatorX(centerLongitude);
+      deltaX -= Math.round(deltaX);
+      return {
+        x: size.width / 2 + deltaX * worldSize,
+        y:
+          size.height / 2 +
+          (mercatorY(coordinates.lat) - mercatorY(centerLatitude)) *
+            worldSize,
+      };
+    };
+    return {
+      tiles,
+      tileZoom,
+      points: qsos.map((qso) => ({ qso, ...screenPoint(qso) })),
+      homePoint: home ? screenPoint(home) : null,
+    };
+  }, [center, home, qsos, size, zoom]);
+
+  return (
+    <div className="osm-map-layer" ref={layerRef}>
+      <div className="osm-tiles">
+        {geometry.tiles.map((tile) => (
+          <img
+            alt=""
+            draggable="false"
+            key={tile.key}
+            src={tile.url}
+            style={{
+              left: tile.left,
+              top: tile.top,
+              width: tile.size,
+              height: tile.size,
+            }}
+            onLoad={onReady}
+            onError={(event) => {
+              event.currentTarget.style.display = "none";
+            }}
+          />
+        ))}
+      </div>
+      <svg
+        className="osm-qso-overlay"
+        viewBox={`0 0 ${size.width || 1} ${size.height || 1}`}
+        preserveAspectRatio="none"
+      >
+        {home &&
+          geometry.homePoint &&
+          zoom < 96 &&
+          geometry.points.map(({ qso, x, y }) => {
+            const start = geometry.homePoint!;
+            const middleX = (start.x + x) / 2;
+            const lift = Math.min(90, Math.abs(x - start.x) * 0.12);
+            return (
+              <path
+                className="contact-arc"
+                d={`M${start.x},${start.y} Q${middleX},${Math.min(start.y, y) - lift} ${x},${y}`}
+                key={`osm-path-${qso.id}`}
+              />
+            );
+          })}
+        {geometry.homePoint && (
+          <g
+            className="home-marker osm-screen-marker"
+            transform={`translate(${geometry.homePoint.x} ${geometry.homePoint.y})`}
+          >
+            <circle r="6" />
+            <circle className="home-halo" r="13" />
+          </g>
+        )}
+        {geometry.points.map(({ qso, x, y }) => {
+          if (
+            x < -30 ||
+            x > size.width + 30 ||
+            y < -30 ||
+            y > size.height + 30
+          ) {
+            return null;
+          }
+          const isSelected = selected?.id === qso.id;
+          const isEstimated = qso.locatorSource === "entity";
+          return (
+            <g
+              className={`qso-marker osm-screen-marker${isSelected ? " is-selected" : ""}${isEstimated ? " is-estimated" : ""}`}
+              key={`osm-${qso.id}`}
+              role="button"
+              aria-label={`${qso.call}, ${qso.country}, ${qso.band} ${qso.mode}`}
+              tabIndex={0}
+              transform={`translate(${x} ${y})`}
+              onMouseEnter={(event) => onHover(qso, event)}
+              onMouseLeave={onLeave}
+              onFocus={(event) => onHover(qso, event)}
+              onBlur={onLeave}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => onSelect(qso)}
+              onKeyDown={(event: KeyboardEvent<SVGGElement>) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelect(qso);
+                }
+              }}
+            >
+              <circle
+                className="qso-marker-halo"
+                r={isSelected ? 12 : 8}
+              />
+              <circle
+                className="qso-marker-dot"
+                r={isSelected ? 5.5 : 4}
+              />
+            </g>
+          );
+        })}
+      </svg>
+      <div className="osm-attribution">
+        ©{" "}
+        <a
+          href="https://www.openstreetmap.org/copyright"
+          target="_blank"
+          rel="noreferrer"
+        >
+          OpenStreetMap
+        </a>{" "}
+        contributors · z{geometry.tileZoom}
+      </div>
+    </div>
+  );
 }
 
 function QsoMap({
@@ -903,6 +1314,7 @@ function QsoMap({
   onSelect: (qso: Qso) => void;
 }) {
   const [zoom, setZoom] = useState(1);
+  const [tilesReady, setTilesReady] = useState(false);
   const [center, setCenter] = useState(() => ({
     x: home ? project(home).x : 500,
     y: 250,
@@ -912,10 +1324,9 @@ function QsoMap({
     pointerId: number;
     clientX: number;
     clientY: number;
-    centerX: number;
-    centerY: number;
-    unitsX: number;
-    unitsY: number;
+    centerMercatorX: number;
+    centerMercatorY: number;
+    worldSize: number;
   } | null>(null);
   const [hovered, setHovered] = useState<{
     qso: Qso;
@@ -960,18 +1371,25 @@ function QsoMap({
     setCenter({ x: home ? project(home).x : 500, y: 250 });
   }, [home]);
 
-  function mapPointFromEvent(event: MouseEvent<SVGSVGElement>) {
-    const matrix = event.currentTarget.getScreenCTM();
-    if (!matrix) return center;
-    const point = event.currentTarget.createSVGPoint();
-    point.x = event.clientX;
-    point.y = event.clientY;
-    return point.matrixTransform(matrix.inverse());
-  }
-
   function handleDoubleClick(event: MouseEvent<SVGSVGElement>) {
     event.preventDefault();
-    const destination = mapPointFromEvent(event);
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const centerLongitude = (center.x / 1000) * 360 - 180;
+    const centerLatitude = 90 - (center.y / 500) * 180;
+    const worldSize = bounds.width * zoom;
+    const destinationLongitude =
+      (mercatorX(centerLongitude) +
+        (event.clientX - bounds.left - bounds.width / 2) / worldSize) *
+        360 -
+      180;
+    const destinationLatitude = inverseMercatorY(
+      mercatorY(centerLatitude) +
+        (event.clientY - bounds.top - bounds.height / 2) / worldSize,
+    );
+    const destination = project({
+      lat: destinationLatitude,
+      lon: destinationLongitude,
+    });
     const level = Math.min(MAX_MAP_ZOOM, zoom * MAP_ZOOM_FACTOR);
     setZoom(level);
     setCenter(clampCenter(destination, level));
@@ -979,16 +1397,16 @@ function QsoMap({
 
   function startPan(event: PointerEvent<SVGSVGElement>) {
     if (zoom <= 1) return;
-    const matrix = event.currentTarget.getScreenCTM();
-    if (!matrix) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const centerLongitude = (center.x / 1000) * 360 - 180;
+    const centerLatitude = 90 - (center.y / 500) * 180;
     panRef.current = {
       pointerId: event.pointerId,
       clientX: event.clientX,
       clientY: event.clientY,
-      centerX: center.x,
-      centerY: center.y,
-      unitsX: 1 / Math.hypot(matrix.a, matrix.b),
-      unitsY: 1 / Math.hypot(matrix.c, matrix.d),
+      centerMercatorX: mercatorX(centerLongitude),
+      centerMercatorY: mercatorY(centerLatitude),
+      worldSize: bounds.width * zoom,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
     setIsPanning(true);
@@ -999,10 +1417,17 @@ function QsoMap({
     if (!pan || pan.pointerId !== event.pointerId) return;
     setCenter(
       clampCenter(
-        {
-          x: pan.centerX - (event.clientX - pan.clientX) * pan.unitsX,
-          y: pan.centerY - (event.clientY - pan.clientY) * pan.unitsY,
-        },
+        project({
+          lon:
+            (pan.centerMercatorX -
+              (event.clientX - pan.clientX) / pan.worldSize) *
+              360 -
+            180,
+          lat: inverseMercatorY(
+            pan.centerMercatorY -
+              (event.clientY - pan.clientY) / pan.worldSize,
+          ),
+        }),
         zoom,
       ),
     );
@@ -1046,7 +1471,7 @@ function QsoMap({
   return (
     <div className="map-stage">
       <svg
-        className={`world-map${isPanning ? " is-panning" : ""}`}
+        className={`world-map${isPanning ? " is-panning" : ""}${tilesReady ? " has-osm" : ""}`}
         viewBox={viewBox}
         preserveAspectRatio="xMidYMin meet"
         role="img"
@@ -1152,6 +1577,18 @@ function QsoMap({
           );
         })}
       </svg>
+
+      <OsmTileLayer
+        qsos={qsos}
+        home={home}
+        center={center}
+        zoom={zoom}
+        selected={selected}
+        onSelect={centerOnQso}
+        onHover={showHover}
+        onLeave={() => setHovered(null)}
+        onReady={() => setTilesReady(true)}
+      />
 
       {hovered && (
         <div

@@ -30,7 +30,9 @@ test("maps support deep zoom and center the wrapped world on the home longitude"
     new URL("../app/page.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(source, /const MAX_MAP_ZOOM = 1024/);
+  assert.match(source, /const MAX_MAP_ZOOM = 131072/);
+  assert.match(source, /tile\.openstreetmap\.org/);
+  assert.match(source, /OpenStreetMap<\/a> contributors/);
   assert.match(source, /viewBox="\$\{mapCenterX - 500\} 0 1000 500"/);
   assert.match(source, /\[-1000, 0, 1000\]\.map/);
 });
