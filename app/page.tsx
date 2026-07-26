@@ -825,7 +825,7 @@ function buildStandaloneHtml(
 </section>
 <main>
 <section class="map" aria-label="World map of radio contacts">
-<svg id="standalone-map" viewBox="0 0 1000 500" role="img" aria-label="World map with QSO paths">
+<svg id="standalone-map" viewBox="0 0 1000 500" preserveAspectRatio="xMidYMin meet" role="img" aria-label="World map with QSO paths">
 <g class="graticule">${[-120, -60, 0, 60, 120].map((lon) => `<line x1="${((lon + 180) / 360) * 1000}" y1="0" x2="${((lon + 180) / 360) * 1000}" y2="500"/>`).join("")}${[-60, -30, 0, 30, 60].map((lat) => `<line x1="0" y1="${((90 - lat) / 180) * 500}" x2="1000" y2="${((90 - lat) / 180) * 500}"/>`).join("")}</g>
 <path class="land" d="${worldPath}"/>
 ${home ? `<circle class="origin" cx="${project(home).x}" cy="${project(home).y}" r="6"/>` : ""}
@@ -989,6 +989,7 @@ function QsoMap({
       <svg
         className={`world-map${isPanning ? " is-panning" : ""}`}
         viewBox={viewBox}
+        preserveAspectRatio="xMidYMin meet"
         role="img"
         aria-label={`World map showing ${qsos.length} mapped QSOs`}
         onDoubleClick={handleDoubleClick}
