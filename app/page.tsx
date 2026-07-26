@@ -588,6 +588,16 @@ function standaloneApp() {
           `<button class="row" data-id="${qso.id}"><strong>${safe(qso.call)}</strong><span>${safe(qso.country)}</span><span>${safe(qso.band)}</span><span>${safe(qso.mode)}</span></button>`,
       )
       .join("");
+    list.querySelectorAll<HTMLButtonElement>(".row").forEach((row) => {
+      row.addEventListener("click", () => {
+        const qso = filtered.find(
+          (candidate) => candidate.id === Number(row.dataset.id),
+        );
+        if (!qso) return;
+        const detail = document.getElementById("detail") as HTMLElement;
+        detail.innerHTML = `<strong>${safe(qso.call)}</strong><span>${safe(qso.country)} · ${safe(qso.band)} · ${safe(qso.mode)} · ${safe(qso.date)}</span>`;
+      });
+    });
     resultCount.textContent = `${filtered.length} mapped QSO${filtered.length === 1 ? "" : "s"}`;
   };
 
@@ -888,7 +898,7 @@ export default function Home() {
     link.href = url;
     link.download = `${sourceName.replace(/\.(adi|adif)$/i, "").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "qso-log"}-map.html`;
     link.click();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     setMessage("Portable HTML map downloaded.");
   }
 
