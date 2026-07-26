@@ -430,6 +430,13 @@ h3 {
   width: 100%;
   height: 100%;
   min-height: 470px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.world-map.is-panning {
+  cursor: grabbing;
 }
 
 .map-ocean {
@@ -504,11 +511,108 @@ h3 {
   stroke-width: 1.7;
 }
 
+.qso-hover-card {
+  position: absolute;
+  z-index: 4;
+  width: min(280px, calc(100% - 24px));
+  padding: 14px;
+  border: 1px solid #40545a;
+  border-radius: 6px;
+  background: rgb(9 19 23 / 0.97);
+  box-shadow: 0 16px 36px rgb(0 0 0 / 0.34);
+  pointer-events: none;
+}
+
+.qso-hover-card.is-above {
+  transform: translate(-50%, calc(-100% - 14px));
+}
+
+.qso-hover-card.is-below {
+  transform: translate(-50%, 14px);
+}
+
+.qso-hover-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 11px;
+  border-bottom: 1px solid var(--line);
+}
+
+.qso-hover-heading strong,
+.qso-hover-heading span {
+  display: block;
+}
+
+.qso-hover-heading strong {
+  color: var(--amber-bright);
+  font-family: var(--font-geist-mono), "SFMono-Regular", Consolas, monospace;
+  font-size: 17px;
+  letter-spacing: 0.04em;
+}
+
+.qso-hover-heading span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.qso-hover-heading small {
+  padding: 4px 6px;
+  border: 1px solid rgb(107 193 192 / 0.28);
+  border-radius: 3px;
+  color: var(--cyan);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.qso-hover-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin: 12px 0 0;
+}
+
+.qso-hover-card dt {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 8px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.qso-hover-card dd {
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--font-geist-mono), "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-gesture-hint {
+  position: absolute;
+  z-index: 3;
+  bottom: 14px;
+  left: 16px;
+  padding: 6px 8px;
+  border: 1px solid rgb(60 80 84 / 0.7);
+  border-radius: 4px;
+  background: rgb(8 17 20 / 0.8);
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
 .map-tools {
   position: absolute;
+  display: grid;
+  z-index: 5;
   top: 16px;
   right: 16px;
-  display: grid;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 5px;

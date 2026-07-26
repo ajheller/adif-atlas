@@ -3,7 +3,10 @@
 import {
   ChangeEvent,
   DragEvent,
+  FocusEvent,
   KeyboardEvent,
+  MouseEvent,
+  PointerEvent,
   useMemo,
   useRef,
   useState,
@@ -512,12 +515,26 @@ function standaloneApp() {
     }
   ).__QSO_PAYLOAD__;
   const svg = document.getElementById("map-points") as unknown as SVGElement;
+  const mapSvg = document.getElementById("standalone-map") as unknown as SVGSVGElement;
   const list = document.getElementById("qso-list") as HTMLElement;
   const resultCount = document.getElementById("result-count") as HTMLElement;
   const band = document.getElementById("band") as HTMLSelectElement;
   const mode = document.getElementById("mode") as HTMLSelectElement;
   const search = document.getElementById("search") as HTMLInputElement;
   const namespace = "http://www.w3.org/2000/svg";
+  let mapZoom = 1;
+  let mapCenter = { x: 500, y: 250 };
+  let drag:
+    | {
+        pointerId: number;
+        clientX: number;
+        clientY: number;
+        centerX: number;
+        centerY: number;
+        unitsX: number;
+        unitsY: number;
+      }
+    | null = null;
 
   const safe = (value: string) =>
     String(value)
@@ -528,6 +545,93 @@ function standaloneApp() {
   const point = (lat: number, lon: number) => ({
     x: ((lon + 180) / 360) * 1000,
     y: ((90 - lat) / 180) * 500,
+  });
+  const clampCenter = (candidate: { x: number; y: number }) => {
+    const halfWidth = 500 / mapZoom;
+    const halfHeight = 250 / mapZoom;
+    return {
+      x: Math.max(halfWidth, Math.min(1000 - halfWidth, candidate.x)),
+      y: Math.max(halfHeight, Math.min(500 - halfHeight, candidate.y)),
+    };
+  };
+  const updateView = () => {
+    mapCenter = clampCenter(mapCenter);
+    const width = 1000 / mapZoom;
+    const height = 500 / mapZoom;
+    mapSvg.setAttribute(
+      "viewBox",
+      `${mapCenter.x - width / 2} ${mapCenter.y - height / 2} ${width} ${height}`,
+    );
+    const zoomLabel = document.getElementById("standalone-zoom-label");
+    if (zoomLabel) zoomLabel.textContent = `${Math.round(mapZoom * 100)}%`;
+  };
+  const mapPointFromEvent = (event: globalThis.MouseEvent) => {
+    const matrix = mapSvg.getScreenCTM();
+    if (!matrix) return mapCenter;
+    const cursor = mapSvg.createSVGPoint();
+    cursor.x = event.clientX;
+    cursor.y = event.clientY;
+    return cursor.matrixTransform(matrix.inverse());
+  };
+  const centerQso = (qso: Qso) => {
+    mapZoom = Math.max(mapZoom, 1.5);
+    mapCenter = point(qso.lat, qso.lon);
+    updateView();
+  };
+
+  mapSvg.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    const destination = mapPointFromEvent(event);
+    mapZoom = Math.min(2.25, mapZoom + 0.25);
+    mapCenter = destination;
+    updateView();
+  });
+  mapSvg.addEventListener("pointerdown", (event) => {
+    if (mapZoom <= 1) return;
+    const matrix = mapSvg.getScreenCTM();
+    if (!matrix) return;
+    drag = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      centerX: mapCenter.x,
+      centerY: mapCenter.y,
+      unitsX: 1 / Math.hypot(matrix.a, matrix.b),
+      unitsY: 1 / Math.hypot(matrix.c, matrix.d),
+    };
+    mapSvg.setPointerCapture(event.pointerId);
+    mapSvg.classList.add("dragging");
+  });
+  mapSvg.addEventListener("pointermove", (event) => {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    mapCenter = {
+      x: drag.centerX - (event.clientX - drag.clientX) * drag.unitsX,
+      y: drag.centerY - (event.clientY - drag.clientY) * drag.unitsY,
+    };
+    updateView();
+  });
+  const finishDrag = (event: globalThis.PointerEvent) => {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (mapSvg.hasPointerCapture(event.pointerId)) {
+      mapSvg.releasePointerCapture(event.pointerId);
+    }
+    drag = null;
+    mapSvg.classList.remove("dragging");
+  };
+  mapSvg.addEventListener("pointerup", finishDrag);
+  mapSvg.addEventListener("pointercancel", finishDrag);
+  document.getElementById("standalone-zoom-in")?.addEventListener("click", () => {
+    mapZoom = Math.min(2.25, mapZoom + 0.25);
+    updateView();
+  });
+  document.getElementById("standalone-zoom-out")?.addEventListener("click", () => {
+    mapZoom = Math.max(1, mapZoom - 0.25);
+    updateView();
+  });
+  document.getElementById("standalone-zoom-reset")?.addEventListener("click", () => {
+    mapZoom = 1;
+    mapCenter = { x: 500, y: 250 };
+    updateView();
   });
 
   const render = () => {
@@ -568,16 +672,41 @@ function standaloneApp() {
       marker.setAttribute("tabindex", "0");
       marker.setAttribute("role", "button");
       marker.setAttribute("aria-label", `${qso.call}, ${qso.country}`);
+      const markerTitle = document.createElementNS(namespace, "title");
+      markerTitle.textContent = [
+        qso.call,
+        qso.country,
+        `${qso.band} ${qso.mode}`,
+        [qso.date, qso.time ? `${qso.time} UTC` : ""]
+          .filter(Boolean)
+          .join(" "),
+        qso.grid ? `Grid ${qso.grid}` : "",
+        qso.rstSent || qso.rstReceived
+          ? `RST ${qso.rstSent || "—"} / ${qso.rstReceived || "—"}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      marker.append(markerTitle);
       const select = () => {
         document.querySelectorAll(".marker").forEach((item) => item.classList.remove("active"));
         marker.classList.add("active");
         const detail = document.getElementById("detail") as HTMLElement;
-        detail.innerHTML = `<strong>${safe(qso.call)}</strong><span>${safe(qso.country)} · ${safe(qso.band)} · ${safe(qso.mode)} · ${safe(qso.date)}</span>`;
+        detail.innerHTML = `<strong>${safe(qso.call)}</strong><span>${safe(qso.country)} · ${safe(qso.band)} · ${safe(qso.mode)} · ${safe(qso.date)}${qso.grid ? ` · ${safe(qso.grid)}` : ""}</span>`;
       };
-      marker.addEventListener("click", select);
+      marker.addEventListener("mouseenter", select);
+      marker.addEventListener("focus", select);
+      marker.addEventListener("pointerdown", (event) => event.stopPropagation());
+      marker.addEventListener("click", () => {
+        select();
+        centerQso(qso);
+      });
       marker.addEventListener("keydown", (event) => {
         const key = (event as unknown as { key: string }).key;
-        if (key === "Enter" || key === " ") select();
+        if (key === "Enter" || key === " ") {
+          select();
+          centerQso(qso);
+        }
       });
       svg.append(marker);
     }
@@ -596,6 +725,7 @@ function standaloneApp() {
         if (!qso) return;
         const detail = document.getElementById("detail") as HTMLElement;
         detail.innerHTML = `<strong>${safe(qso.call)}</strong><span>${safe(qso.country)} · ${safe(qso.band)} · ${safe(qso.mode)} · ${safe(qso.date)}</span>`;
+        centerQso(qso);
       });
     });
     resultCount.textContent = `${filtered.length} mapped QSO${filtered.length === 1 ? "" : "s"}`;
@@ -624,7 +754,7 @@ function buildStandaloneHtml(
 <meta name="color-scheme" content="dark">
 <title>${escapeHtml(sourceName)} · QSO Atlas</title>
 <style>
-:root{--ink:#f2f0e8;--muted:#9ca7aa;--panel:#111a1e;--line:#26343a;--ocean:#0b1418;--land:#1c2b2f;--amber:#f0b45a;--cyan:#73c9c9}*{box-sizing:border-box}body{margin:0;background:#091115;color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:18px 28px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:18px;letter-spacing:.04em}header p{margin:2px 0 0;color:var(--muted)}.mark{display:flex;align-items:center;gap:12px}.pulse{width:12px;height:12px;border:2px solid var(--amber);border-radius:50%;box-shadow:0 0 0 5px rgba(240,180,90,.12)}.controls{display:flex;flex-wrap:wrap;gap:10px;padding:14px 28px;border-bottom:1px solid var(--line)}input,select{min-height:38px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:0 12px}input{min-width:220px}.count{margin-left:auto;align-self:center;color:var(--muted)}main{display:grid;grid-template-columns:minmax(0,1fr) 310px;min-height:calc(100vh - 132px)}.map{position:relative;min-height:580px;background:var(--ocean);overflow:hidden}.map svg{display:block;width:100%;height:100%;min-height:580px}.graticule{stroke:#233239;stroke-width:.55}.land{fill:var(--land);stroke:#33474d;stroke-width:.55}.arc{fill:none;stroke:var(--amber);stroke-width:1;stroke-opacity:.28}.marker{fill:var(--amber);stroke:#fff2d7;stroke-width:1.4;cursor:pointer;transition:r .15s}.marker:hover,.marker:focus,.marker.active{r:8;outline:none}.origin{fill:var(--cyan);stroke:#dff;stroke-width:2}.detail{position:absolute;left:20px;bottom:20px;display:flex;gap:14px;align-items:center;max-width:calc(100% - 40px);padding:12px 15px;border:1px solid #3a4c52;border-radius:8px;background:rgba(9,17,21,.92)}.detail span{color:var(--muted)}aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto}.row{display:grid;width:100%;grid-template-columns:1.2fr 1.6fr .7fr .7fr;gap:8px;padding:13px 16px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);text-align:left;cursor:pointer}.row:hover{background:#18252a}.row span{overflow:hidden;color:var(--muted);text-overflow:ellipsis;white-space:nowrap}@media(max-width:760px){header{align-items:flex-start;padding:16px 18px}.controls{padding:12px 18px}.count{width:100%;margin-left:0}main{grid-template-columns:1fr}.map,.map svg{min-height:430px}aside{max-height:360px;border-top:1px solid var(--line);border-left:0}}
+:root{--ink:#f2f0e8;--muted:#9ca7aa;--panel:#111a1e;--line:#26343a;--ocean:#0b1418;--land:#1c2b2f;--amber:#f0b45a;--cyan:#73c9c9}*{box-sizing:border-box}body{margin:0;background:#091115;color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:18px 28px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:18px;letter-spacing:.04em}header p{margin:2px 0 0;color:var(--muted)}.mark{display:flex;align-items:center;gap:12px}.pulse{width:12px;height:12px;border:2px solid var(--amber);border-radius:50%;box-shadow:0 0 0 5px rgba(240,180,90,.12)}.controls{display:flex;flex-wrap:wrap;gap:10px;padding:14px 28px;border-bottom:1px solid var(--line)}input,select{min-height:38px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:0 12px}input{min-width:220px}.count{margin-left:auto;align-self:center;color:var(--muted)}main{display:grid;grid-template-columns:minmax(0,1fr) 310px;min-height:calc(100vh - 132px)}.map{position:relative;min-height:580px;background:var(--ocean);overflow:hidden}.map svg{display:block;width:100%;height:100%;min-height:580px;cursor:grab;touch-action:none;user-select:none}.map svg.dragging{cursor:grabbing}.graticule{stroke:#233239;stroke-width:.55}.land{fill:var(--land);stroke:#33474d;stroke-width:.55}.arc{fill:none;stroke:var(--amber);stroke-width:1;stroke-opacity:.28}.marker{fill:var(--amber);stroke:#fff2d7;stroke-width:1.4;cursor:pointer;transition:r .15s}.marker:hover,.marker:focus,.marker.active{r:8;outline:none}.origin{fill:var(--cyan);stroke:#dff;stroke-width:2}.mapbuttons{position:absolute;display:grid;z-index:3;top:16px;right:16px;overflow:hidden;border:1px solid var(--line);border-radius:5px;background:rgba(9,17,21,.92)}.mapbuttons button{min-width:44px;height:34px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink)}.mapbuttons button:last-child{border:0}.detail{position:absolute;left:20px;bottom:20px;display:flex;gap:14px;align-items:center;max-width:calc(100% - 40px);padding:12px 15px;border:1px solid #3a4c52;border-radius:8px;background:rgba(9,17,21,.92)}.detail span{color:var(--muted)}aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto}.row{display:grid;width:100%;grid-template-columns:1.2fr 1.6fr .7fr .7fr;gap:8px;padding:13px 16px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);text-align:left;cursor:pointer}.row:hover{background:#18252a}.row span{overflow:hidden;color:var(--muted);text-overflow:ellipsis;white-space:nowrap}@media(max-width:760px){header{align-items:flex-start;padding:16px 18px}.controls{padding:12px 18px}.count{width:100%;margin-left:0}main{grid-template-columns:1fr}.map,.map svg{min-height:430px}aside{max-height:360px;border-top:1px solid var(--line);border-left:0}}
 </style>
 </head>
 <body>
@@ -637,12 +767,17 @@ function buildStandaloneHtml(
 </section>
 <main>
 <section class="map" aria-label="World map of radio contacts">
-<svg viewBox="0 0 1000 500" role="img" aria-label="World map with QSO paths">
+<svg id="standalone-map" viewBox="0 0 1000 500" role="img" aria-label="World map with QSO paths">
 <g class="graticule">${[-120, -60, 0, 60, 120].map((lon) => `<line x1="${((lon + 180) / 360) * 1000}" y1="0" x2="${((lon + 180) / 360) * 1000}" y2="500"/>`).join("")}${[-60, -30, 0, 30, 60].map((lat) => `<line x1="0" y1="${((90 - lat) / 180) * 500}" x2="1000" y2="${((90 - lat) / 180) * 500}"/>`).join("")}</g>
 <path class="land" d="${worldPath}"/>
 ${home ? `<circle class="origin" cx="${project(home).x}" cy="${project(home).y}" r="6"/>` : ""}
 <g id="map-points"></g>
 </svg>
+<div class="mapbuttons" aria-label="Map zoom">
+<button id="standalone-zoom-in" type="button" aria-label="Zoom in">+</button>
+<button id="standalone-zoom-reset" type="button" aria-label="Reset map"><span id="standalone-zoom-label">100%</span></button>
+<button id="standalone-zoom-out" type="button" aria-label="Zoom out">−</button>
+</div>
 <div class="detail" id="detail"><strong>Select a QSO</strong><span>Use the map or contact list</span></div>
 </section>
 <aside id="qso-list" aria-label="QSO list"></aside>
@@ -664,17 +799,145 @@ function QsoMap({
   onSelect: (qso: Qso) => void;
 }) {
   const [zoom, setZoom] = useState(1);
+  const [center, setCenter] = useState({ x: 500, y: 250 });
+  const [isPanning, setIsPanning] = useState(false);
+  const panRef = useRef<{
+    pointerId: number;
+    clientX: number;
+    clientY: number;
+    centerX: number;
+    centerY: number;
+    unitsX: number;
+    unitsY: number;
+  } | null>(null);
+  const [hovered, setHovered] = useState<{
+    qso: Qso;
+    x: number;
+    y: number;
+    placement: "above" | "below";
+  } | null>(null);
   const viewWidth = 1000 / zoom;
   const viewHeight = 500 / zoom;
-  const viewBox = `${(1000 - viewWidth) / 2} ${(500 - viewHeight) / 2} ${viewWidth} ${viewHeight}`;
+  const viewBox = `${center.x - viewWidth / 2} ${center.y - viewHeight / 2} ${viewWidth} ${viewHeight}`;
+
+  function clampCenter(candidate: { x: number; y: number }, level: number) {
+    const halfWidth = 500 / level;
+    const halfHeight = 250 / level;
+    return {
+      x: Math.max(halfWidth, Math.min(1000 - halfWidth, candidate.x)),
+      y: Math.max(halfHeight, Math.min(500 - halfHeight, candidate.y)),
+    };
+  }
+
+  function changeZoom(nextZoom: number) {
+    const level = Math.max(1, Math.min(2.25, nextZoom));
+    setZoom(level);
+    setCenter((current) => clampCenter(current, level));
+  }
+
+  function centerOnQso(qso: Qso) {
+    const level = Math.max(zoom, 1.5);
+    setHovered(null);
+    setZoom(level);
+    setCenter(clampCenter(project(qso), level));
+    onSelect(qso);
+  }
+
+  function mapPointFromEvent(event: MouseEvent<SVGSVGElement>) {
+    const matrix = event.currentTarget.getScreenCTM();
+    if (!matrix) return center;
+    const point = event.currentTarget.createSVGPoint();
+    point.x = event.clientX;
+    point.y = event.clientY;
+    return point.matrixTransform(matrix.inverse());
+  }
+
+  function handleDoubleClick(event: MouseEvent<SVGSVGElement>) {
+    event.preventDefault();
+    const destination = mapPointFromEvent(event);
+    const level = Math.min(2.25, zoom + 0.25);
+    setZoom(level);
+    setCenter(clampCenter(destination, level));
+  }
+
+  function startPan(event: PointerEvent<SVGSVGElement>) {
+    if (zoom <= 1) return;
+    const matrix = event.currentTarget.getScreenCTM();
+    if (!matrix) return;
+    panRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      centerX: center.x,
+      centerY: center.y,
+      unitsX: 1 / Math.hypot(matrix.a, matrix.b),
+      unitsY: 1 / Math.hypot(matrix.c, matrix.d),
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setIsPanning(true);
+  }
+
+  function continuePan(event: PointerEvent<SVGSVGElement>) {
+    const pan = panRef.current;
+    if (!pan || pan.pointerId !== event.pointerId) return;
+    setCenter(
+      clampCenter(
+        {
+          x: pan.centerX - (event.clientX - pan.clientX) * pan.unitsX,
+          y: pan.centerY - (event.clientY - pan.clientY) * pan.unitsY,
+        },
+        zoom,
+      ),
+    );
+  }
+
+  function finishPan(event: PointerEvent<SVGSVGElement>) {
+    const pan = panRef.current;
+    if (!pan || pan.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    panRef.current = null;
+    setIsPanning(false);
+  }
+
+  function showHover(
+    qso: Qso,
+    event: MouseEvent<SVGGElement> | FocusEvent<SVGGElement>,
+  ) {
+    const markerBounds = event.currentTarget.getBoundingClientRect();
+    const mapBounds =
+      event.currentTarget.ownerSVGElement?.getBoundingClientRect();
+    if (!mapBounds) return;
+
+    const cardWidth = Math.min(280, Math.max(220, mapBounds.width - 24));
+    const minimumX = cardWidth / 2 + 12;
+    const maximumX = Math.max(minimumX, mapBounds.width - minimumX);
+    const markerX =
+      markerBounds.left + markerBounds.width / 2 - mapBounds.left;
+    const markerY =
+      markerBounds.top + markerBounds.height / 2 - mapBounds.top;
+
+    setHovered({
+      qso,
+      x: Math.max(minimumX, Math.min(maximumX, markerX)),
+      y: markerY,
+      placement: markerY < 170 ? "below" : "above",
+    });
+  }
 
   return (
     <div className="map-stage">
       <svg
-        className="world-map"
+        className={`world-map${isPanning ? " is-panning" : ""}`}
         viewBox={viewBox}
         role="img"
         aria-label={`World map showing ${qsos.length} mapped QSOs`}
+        onDoubleClick={handleDoubleClick}
+        onPointerDown={startPan}
+        onPointerMove={continuePan}
+        onPointerUp={finishPan}
+        onPointerCancel={finishPan}
       >
         <title>World map of mapped amateur radio contacts</title>
         <desc>
@@ -734,11 +997,16 @@ function QsoMap({
               aria-label={`${qso.call}, ${qso.country}, ${qso.band} ${qso.mode}`}
               tabIndex={0}
               transform={`translate(${point.x} ${point.y})`}
-              onClick={() => onSelect(qso)}
+              onMouseEnter={(event) => showHover(qso, event)}
+              onMouseLeave={() => setHovered(null)}
+              onFocus={(event) => showHover(qso, event)}
+              onBlur={() => setHovered(null)}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => centerOnQso(qso)}
               onKeyDown={(event: KeyboardEvent<SVGGElement>) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  onSelect(qso);
+                  centerOnQso(qso);
                 }
               }}
             >
@@ -755,25 +1023,85 @@ function QsoMap({
         })}
       </svg>
 
+      {hovered && (
+        <div
+          className={`qso-hover-card is-${hovered.placement}`}
+          style={{ left: hovered.x, top: hovered.y }}
+          role="tooltip"
+        >
+          <div className="qso-hover-heading">
+            <div>
+              <strong>{hovered.qso.call}</strong>
+              <span>{hovered.qso.country}</span>
+            </div>
+            <small>{hovered.qso.qsl || "Unconfirmed"}</small>
+          </div>
+          <dl>
+            <div>
+              <dt>Band / mode</dt>
+              <dd>
+                {hovered.qso.band} · {hovered.qso.mode}
+              </dd>
+            </div>
+            <div>
+              <dt>Date / time</dt>
+              <dd>
+                {hovered.qso.date || "—"}
+                {hovered.qso.time ? ` · ${hovered.qso.time}Z` : ""}
+              </dd>
+            </div>
+            <div>
+              <dt>Grid</dt>
+              <dd>{hovered.qso.grid || "LAT/LON"}</dd>
+            </div>
+            <div>
+              <dt>Signal</dt>
+              <dd>
+                {hovered.qso.rstSent || "—"} /{" "}
+                {hovered.qso.rstReceived || "—"}
+              </dd>
+            </div>
+            {home && (
+              <div>
+                <dt>Distance</dt>
+                <dd>
+                  {Math.round(
+                    distanceKm(home, hovered.qso),
+                  ).toLocaleString()}{" "}
+                  km
+                </dd>
+              </div>
+            )}
+          </dl>
+        </div>
+      )}
+
+      <div className="map-gesture-hint" aria-hidden="true">
+        Drag to pan · Double-click to center
+      </div>
+
       <div className="map-tools" aria-label="Map zoom">
         <button
           type="button"
           aria-label="Zoom in"
-          onClick={() => setZoom((current) => Math.min(2.25, current + 0.25))}
+          onClick={() => changeZoom(zoom + 0.25)}
         >
           +
         </button>
         <button
           type="button"
           aria-label="Reset zoom"
-          onClick={() => setZoom(1)}
+          onClick={() => {
+            setZoom(1);
+            setCenter({ x: 500, y: 250 });
+          }}
         >
           {Math.round(zoom * 100)}%
         </button>
         <button
           type="button"
           aria-label="Zoom out"
-          onClick={() => setZoom((current) => Math.max(1, current - 0.25))}
+          onClick={() => changeZoom(zoom - 0.25)}
         >
           −
         </button>

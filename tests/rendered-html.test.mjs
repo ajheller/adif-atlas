@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
 const templateRoot = new URL("../", import.meta.url);
@@ -48,4 +48,19 @@ test("includes the bespoke social card and removes the starter preview", async (
   await assert.rejects(
     access(new URL("../app/_sites-preview/SkeletonPreview.tsx", templateRoot)),
   );
+});
+
+test("includes hover details in the live and portable maps", async () => {
+  const [page, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.ok(page.includes("qso-hover-card is-${hovered.placement}"));
+  assert.ok(page.includes('marker.addEventListener("mouseenter", select)'));
+  assert.ok(page.includes("onPointerMove={continuePan}"));
+  assert.ok(page.includes("onDoubleClick={handleDoubleClick}"));
+  assert.ok(page.includes("centerOnQso(qso)"));
+  assert.ok(styles.includes(".qso-hover-card {"));
+  assert.ok(styles.includes(".world-map.is-panning {"));
 });
