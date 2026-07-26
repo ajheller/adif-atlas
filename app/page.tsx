@@ -7,6 +7,7 @@ import {
   KeyboardEvent,
   MouseEvent,
   PointerEvent,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -303,9 +304,15 @@ const demoQsos: Qso[] = [
 ];
 
 const demoHome = { lat: 47.6062, lon: -122.3321 };
+const MAX_MAP_ZOOM = 16;
+const MAP_ZOOM_FACTOR = 1.5;
 
 function project({ lat, lon }: Coordinates) {
   return { x: ((lon + 180) / 360) * 1000, y: ((90 - lat) / 180) * 500 };
+}
+
+function nearestWrappedX(x: number, centerX: number) {
+  return x + Math.round((centerX - x) / 1000) * 1000;
 }
 
 function gridToCoordinates(gridValue: string): Coordinates | null {
@@ -544,8 +551,15 @@ function standaloneApp() {
   const mode = document.getElementById("mode") as HTMLSelectElement;
   const search = document.getElementById("search") as HTMLInputElement;
   const namespace = "http://www.w3.org/2000/svg";
+  const maxMapZoom = 16;
+  const zoomFactor = 1.5;
   let mapZoom = 1;
-  let mapCenter = { x: 500, y: 250 };
+  let mapCenter = payload.home
+    ? {
+        x: ((payload.home.lon + 180) / 360) * 1000,
+        y: 250,
+      }
+    : { x: 500, y: 250 };
   let drag:
     | {
         pointerId: number;
@@ -568,6 +582,18 @@ function standaloneApp() {
     x: ((lon + 180) / 360) * 1000,
     y: ((90 - lat) / 180) * 500,
   });
+  const wrappedPoint = (lat: number, lon: number) => {
+    const projected = point(lat, lon);
+    const referenceX = payload.home
+      ? point(payload.home.lat, payload.home.lon).x
+      : mapCenter.x;
+    return {
+      ...projected,
+      x:
+        projected.x +
+        Math.round((referenceX - projected.x) / 1000) * 1000,
+    };
+  };
   const locationText = (qso: Qso) =>
     qso.locatorSource === "coordinates"
       ? "LAT/LON"
@@ -578,9 +604,21 @@ function standaloneApp() {
     const halfWidth = 500 / mapZoom;
     const halfHeight = 250 / mapZoom;
     return {
-      x: Math.max(halfWidth, Math.min(1000 - halfWidth, candidate.x)),
+      x: Math.max(-500 + halfWidth, Math.min(1500 - halfWidth, candidate.x)),
       y: Math.max(halfHeight, Math.min(500 - halfHeight, candidate.y)),
     };
+  };
+  const updateMarkerSizes = () => {
+    mapSvg.querySelectorAll<SVGCircleElement>(".marker").forEach((marker) => {
+      marker.setAttribute(
+        "r",
+        String((marker.classList.contains("active") ? 8 : 5) / Math.sqrt(mapZoom)),
+      );
+    });
+    mapSvg.querySelector<SVGCircleElement>(".origin")?.setAttribute(
+      "r",
+      String(6 / Math.sqrt(mapZoom)),
+    );
   };
   const updateView = () => {
     mapCenter = clampCenter(mapCenter);
@@ -592,6 +630,7 @@ function standaloneApp() {
     );
     const zoomLabel = document.getElementById("standalone-zoom-label");
     if (zoomLabel) zoomLabel.textContent = `${Math.round(mapZoom * 100)}%`;
+    updateMarkerSizes();
   };
   const mapPointFromEvent = (event: globalThis.MouseEvent) => {
     const matrix = mapSvg.getScreenCTM();
@@ -602,15 +641,15 @@ function standaloneApp() {
     return cursor.matrixTransform(matrix.inverse());
   };
   const centerQso = (qso: Qso) => {
-    mapZoom = Math.max(mapZoom, 1.5);
-    mapCenter = point(qso.lat, qso.lon);
+    mapZoom = Math.max(mapZoom, 2);
+    mapCenter = wrappedPoint(qso.lat, qso.lon);
     updateView();
   };
 
   mapSvg.addEventListener("dblclick", (event) => {
     event.preventDefault();
     const destination = mapPointFromEvent(event);
-    mapZoom = Math.min(2.25, mapZoom + 0.25);
+    mapZoom = Math.min(maxMapZoom, mapZoom * zoomFactor);
     mapCenter = destination;
     updateView();
   });
@@ -649,16 +688,18 @@ function standaloneApp() {
   mapSvg.addEventListener("pointerup", finishDrag);
   mapSvg.addEventListener("pointercancel", finishDrag);
   document.getElementById("standalone-zoom-in")?.addEventListener("click", () => {
-    mapZoom = Math.min(2.25, mapZoom + 0.25);
+    mapZoom = Math.min(maxMapZoom, mapZoom * zoomFactor);
     updateView();
   });
   document.getElementById("standalone-zoom-out")?.addEventListener("click", () => {
-    mapZoom = Math.max(1, mapZoom - 0.25);
+    mapZoom = Math.max(1, mapZoom / zoomFactor);
     updateView();
   });
   document.getElementById("standalone-zoom-reset")?.addEventListener("click", () => {
     mapZoom = 1;
-    mapCenter = { x: 500, y: 250 };
+    mapCenter = payload.home
+      ? { x: point(payload.home.lat, payload.home.lon).x, y: 250 }
+      : { x: 500, y: 250 };
     updateView();
   });
 
@@ -675,9 +716,9 @@ function standaloneApp() {
 
     svg.replaceChildren();
     if (payload.home) {
-      const origin = point(payload.home.lat, payload.home.lon);
+      const origin = wrappedPoint(payload.home.lat, payload.home.lon);
       for (const qso of filtered) {
-        const destination = point(qso.lat, qso.lon);
+        const destination = wrappedPoint(qso.lat, qso.lon);
         const line = document.createElementNS(namespace, "path");
         const middleX = (origin.x + destination.x) / 2;
         const lift = Math.min(82, Math.abs(destination.x - origin.x) * 0.16);
@@ -691,7 +732,7 @@ function standaloneApp() {
     }
 
     for (const qso of filtered) {
-      const location = point(qso.lat, qso.lon);
+      const location = wrappedPoint(qso.lat, qso.lon);
       const marker = document.createElementNS(namespace, "circle");
       marker.setAttribute("cx", String(location.x));
       marker.setAttribute("cy", String(location.y));
@@ -722,6 +763,7 @@ function standaloneApp() {
       const select = () => {
         document.querySelectorAll(".marker").forEach((item) => item.classList.remove("active"));
         marker.classList.add("active");
+        updateMarkerSizes();
         const detail = document.getElementById("detail") as HTMLElement;
         detail.innerHTML = `<strong>${safe(qso.call)}</strong><span>${safe(qso.country)} · ${safe(qso.band)} · ${safe(qso.mode)} · ${safe(qso.date)} · ${safe(locationText(qso))}</span>`;
       };
@@ -760,11 +802,13 @@ function standaloneApp() {
       });
     });
     resultCount.textContent = `${filtered.length} mapped QSO${filtered.length === 1 ? "" : "s"}`;
+    updateMarkerSizes();
   };
 
   [band, mode].forEach((element) => element.addEventListener("change", render));
   search.addEventListener("input", render);
   render();
+  updateView();
 }
 
 function buildStandaloneHtml(
@@ -776,11 +820,13 @@ function buildStandaloneHtml(
   const modes = [...new Set(qsos.map((qso) => qso.mode))].sort();
   const payload = JSON.stringify({ qsos, home }).replaceAll("<", "\\u003c");
   const worldPath = escapeHtml(WORLD_PATH);
+  const mapCenterX = home ? project(home).x : 500;
   const staticArcs = home
     ? qsos
         .map((qso) => {
           const origin = project(home);
           const destination = project(qso);
+          destination.x = nearestWrappedX(destination.x, origin.x);
           const middleX = (origin.x + destination.x) / 2;
           const lift = Math.min(
             82,
@@ -793,6 +839,7 @@ function buildStandaloneHtml(
   const staticMarkers = qsos
     .map((qso) => {
       const point = project(qso);
+      point.x = nearestWrappedX(point.x, mapCenterX);
       const classes = `marker${qso.locatorSource === "entity" ? " estimated" : ""}`;
       const title = [
         qso.call,
@@ -812,7 +859,7 @@ function buildStandaloneHtml(
 <meta name="color-scheme" content="dark">
 <title>${escapeHtml(sourceName)} · QSO Atlas</title>
 <style>
-:root{--ink:#f2f0e8;--muted:#9ca7aa;--panel:#111a1e;--line:#26343a;--ocean:#0b1418;--land:#1c2b2f;--amber:#f0b45a;--cyan:#73c9c9}*{box-sizing:border-box}body{margin:0;background:#091115;color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:18px 28px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:18px;letter-spacing:.04em}header p{margin:2px 0 0;color:var(--muted)}.mark{display:flex;align-items:center;gap:12px}.pulse{width:12px;height:12px;border:2px solid var(--amber);border-radius:50%;box-shadow:0 0 0 5px rgba(240,180,90,.12)}.controls{display:flex;flex-wrap:wrap;gap:10px;padding:14px 28px;border-bottom:1px solid var(--line)}input,select{min-height:38px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:0 12px}input{min-width:220px}.count{margin-left:auto;align-self:center;color:var(--muted)}main{display:grid;grid-template-columns:minmax(0,1fr) 310px;min-height:calc(100vh - 132px)}.map{position:relative;min-height:580px;background:var(--ocean);overflow:hidden}.map svg{display:block;width:100%;height:100%;min-height:580px;cursor:grab;touch-action:none;user-select:none}.map svg.dragging{cursor:grabbing}.graticule{stroke:#233239;stroke-width:.55}.land{fill:var(--land);stroke:#33474d;stroke-width:.55}.arc{fill:none;stroke:var(--amber);stroke-width:1;stroke-opacity:.28}.marker{fill:var(--amber);stroke:#fff2d7;stroke-width:1.4;cursor:pointer;transition:r .15s}.marker.estimated{fill:var(--cyan);stroke-dasharray:2 1}.marker:hover,.marker:focus,.marker.active{r:8;outline:none}.origin{fill:var(--cyan);stroke:#dff;stroke-width:2}.mapbuttons{position:absolute;display:grid;z-index:3;top:16px;right:16px;overflow:hidden;border:1px solid var(--line);border-radius:5px;background:rgba(9,17,21,.92)}.mapbuttons button{min-width:44px;height:34px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink)}.mapbuttons button:last-child{border:0}.detail{position:absolute;left:20px;bottom:20px;display:flex;gap:14px;align-items:center;max-width:calc(100% - 40px);padding:12px 15px;border:1px solid #3a4c52;border-radius:8px;background:rgba(9,17,21,.92)}.detail span{color:var(--muted)}aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto}.row{display:grid;width:100%;grid-template-columns:1.2fr 1.6fr .7fr .7fr;gap:8px;padding:13px 16px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);text-align:left;cursor:pointer}.row:hover{background:#18252a}.row span{overflow:hidden;color:var(--muted);text-overflow:ellipsis;white-space:nowrap}@media(max-width:760px){header{align-items:flex-start;padding:16px 18px}.controls{padding:12px 18px}.count{width:100%;margin-left:0}main{grid-template-columns:1fr}.map,.map svg{min-height:430px}aside{max-height:360px;border-top:1px solid var(--line);border-left:0}}
+:root{--ink:#f2f0e8;--muted:#9ca7aa;--panel:#111a1e;--line:#26343a;--ocean:#0b1418;--land:#1c2b2f;--amber:#f0b45a;--cyan:#73c9c9}*{box-sizing:border-box}body{margin:0;background:#091115;color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:18px 28px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:18px;letter-spacing:.04em}header p{margin:2px 0 0;color:var(--muted)}.mark{display:flex;align-items:center;gap:12px}.pulse{width:12px;height:12px;border:2px solid var(--amber);border-radius:50%;box-shadow:0 0 0 5px rgba(240,180,90,.12)}.controls{display:flex;flex-wrap:wrap;gap:10px;padding:14px 28px;border-bottom:1px solid var(--line)}input,select{min-height:38px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:0 12px}input{min-width:220px}.count{margin-left:auto;align-self:center;color:var(--muted)}main{display:grid;grid-template-columns:minmax(0,1fr) 310px;min-height:calc(100vh - 132px)}.map{position:relative;min-height:580px;background:var(--ocean);overflow:hidden}.map svg{display:block;width:100%;height:100%;min-height:580px;cursor:grab;touch-action:none;user-select:none}.map svg.dragging{cursor:grabbing}.graticule{stroke:#233239;stroke-width:.55;vector-effect:non-scaling-stroke}.land{fill:var(--land);stroke:#33474d;stroke-width:.55;vector-effect:non-scaling-stroke}.arc{fill:none;stroke:var(--amber);stroke-width:1;stroke-opacity:.28;vector-effect:non-scaling-stroke}.marker{fill:var(--amber);stroke:#fff2d7;stroke-width:1.4;cursor:pointer;transition:stroke-width .15s;vector-effect:non-scaling-stroke}.marker.estimated{fill:var(--cyan);stroke-dasharray:2 1}.marker:hover,.marker:focus,.marker.active{stroke-width:2.4;outline:none}.origin{fill:var(--cyan);stroke:#dff;stroke-width:2;vector-effect:non-scaling-stroke}.mapbuttons{position:absolute;display:grid;z-index:3;top:16px;right:16px;overflow:hidden;border:1px solid var(--line);border-radius:5px;background:rgba(9,17,21,.92)}.mapbuttons button{min-width:44px;height:34px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink)}.mapbuttons button:last-child{border:0}.detail{position:absolute;left:20px;bottom:20px;display:flex;gap:14px;align-items:center;max-width:calc(100% - 40px);padding:12px 15px;border:1px solid #3a4c52;border-radius:8px;background:rgba(9,17,21,.92)}.detail span{color:var(--muted)}aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto}.row{display:grid;width:100%;grid-template-columns:1.2fr 1.6fr .7fr .7fr;gap:8px;padding:13px 16px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);text-align:left;cursor:pointer}.row:hover{background:#18252a}.row span{overflow:hidden;color:var(--muted);text-overflow:ellipsis;white-space:nowrap}@media(max-width:760px){header{align-items:flex-start;padding:16px 18px}.controls{padding:12px 18px}.count{width:100%;margin-left:0}main{grid-template-columns:1fr}.map,.map svg{min-height:430px}aside{max-height:360px;border-top:1px solid var(--line);border-left:0}}
 </style>
 </head>
 <body>
@@ -825,9 +872,8 @@ function buildStandaloneHtml(
 </section>
 <main>
 <section class="map" aria-label="World map of radio contacts">
-<svg id="standalone-map" viewBox="0 0 1000 500" preserveAspectRatio="xMidYMin meet" role="img" aria-label="World map with QSO paths">
-<g class="graticule">${[-120, -60, 0, 60, 120].map((lon) => `<line x1="${((lon + 180) / 360) * 1000}" y1="0" x2="${((lon + 180) / 360) * 1000}" y2="500"/>`).join("")}${[-60, -30, 0, 30, 60].map((lat) => `<line x1="0" y1="${((90 - lat) / 180) * 500}" x2="1000" y2="${((90 - lat) / 180) * 500}"/>`).join("")}</g>
-<path class="land" d="${worldPath}"/>
+<svg id="standalone-map" viewBox="${mapCenterX - 500} 0 1000 500" preserveAspectRatio="xMidYMin meet" role="img" aria-label="World map with QSO paths">
+${[-1000, 0, 1000].map((offset) => `<g transform="translate(${offset} 0)"><g class="graticule">${[-120, -60, 0, 60, 120].map((lon) => `<line x1="${((lon + 180) / 360) * 1000}" y1="0" x2="${((lon + 180) / 360) * 1000}" y2="500"/>`).join("")}${[-60, -30, 0, 30, 60].map((lat) => `<line x1="0" y1="${((90 - lat) / 180) * 500}" x2="1000" y2="${((90 - lat) / 180) * 500}"/>`).join("")}</g><path class="land" d="${worldPath}"/></g>`).join("")}
 ${home ? `<circle class="origin" cx="${project(home).x}" cy="${project(home).y}" r="6"/>` : ""}
 <g id="map-points">${staticArcs}${staticMarkers}</g>
 </svg>
@@ -857,7 +903,10 @@ function QsoMap({
   onSelect: (qso: Qso) => void;
 }) {
   const [zoom, setZoom] = useState(1);
-  const [center, setCenter] = useState({ x: 500, y: 250 });
+  const [center, setCenter] = useState(() => ({
+    x: home ? project(home).x : 500,
+    y: 250,
+  }));
   const [isPanning, setIsPanning] = useState(false);
   const panRef = useRef<{
     pointerId: number;
@@ -879,27 +928,37 @@ function QsoMap({
   const viewBox = `${center.x - viewWidth / 2} ${center.y - viewHeight / 2} ${viewWidth} ${viewHeight}`;
 
   function clampCenter(candidate: { x: number; y: number }, level: number) {
-    const halfWidth = 500 / level;
     const halfHeight = 250 / level;
     return {
-      x: Math.max(halfWidth, Math.min(1000 - halfWidth, candidate.x)),
+      x: ((candidate.x % 1000) + 1000) % 1000,
       y: Math.max(halfHeight, Math.min(500 - halfHeight, candidate.y)),
     };
   }
 
   function changeZoom(nextZoom: number) {
-    const level = Math.max(1, Math.min(2.25, nextZoom));
+    const level = Math.max(1, Math.min(MAX_MAP_ZOOM, nextZoom));
     setZoom(level);
     setCenter((current) => clampCenter(current, level));
   }
 
   function centerOnQso(qso: Qso) {
-    const level = Math.max(zoom, 1.5);
+    const level = Math.max(zoom, 2);
     setHovered(null);
     setZoom(level);
-    setCenter(clampCenter(project(qso), level));
+    const point = project(qso);
+    setCenter(
+      clampCenter(
+        { ...point, x: nearestWrappedX(point.x, center.x) },
+        level,
+      ),
+    );
     onSelect(qso);
   }
+
+  useEffect(() => {
+    setZoom(1);
+    setCenter({ x: home ? project(home).x : 500, y: 250 });
+  }, [home]);
 
   function mapPointFromEvent(event: MouseEvent<SVGSVGElement>) {
     const matrix = event.currentTarget.getScreenCTM();
@@ -913,7 +972,7 @@ function QsoMap({
   function handleDoubleClick(event: MouseEvent<SVGSVGElement>) {
     event.preventDefault();
     const destination = mapPointFromEvent(event);
-    const level = Math.min(2.25, zoom + 0.25);
+    const level = Math.min(MAX_MAP_ZOOM, zoom * MAP_ZOOM_FACTOR);
     setZoom(level);
     setCenter(clampCenter(destination, level));
   }
@@ -1003,50 +1062,61 @@ function QsoMap({
           Contact paths extend from the station location to each mapped QSO.
           Select a marker for details.
         </desc>
-        <rect className="map-ocean" x="0" y="0" width="1000" height="500" />
-        <g className="map-graticule" aria-hidden="true">
-          {[-120, -60, 0, 60, 120].map((longitude) => {
-            const x = ((longitude + 180) / 360) * 1000;
-            return <line key={longitude} x1={x} y1="0" x2={x} y2="500" />;
-          })}
-          {[-60, -30, 0, 30, 60].map((latitude) => {
-            const y = ((90 - latitude) / 180) * 500;
-            return <line key={latitude} x1="0" y1={y} x2="1000" y2={y} />;
-          })}
-        </g>
-        <path className="map-land" d={WORLD_PATH} aria-hidden="true" />
+        <rect className="map-ocean" x="-1000" y="0" width="3000" height="500" />
+        {[-1000, 0, 1000].map((offset) => (
+          <g key={offset} transform={`translate(${offset} 0)`} aria-hidden="true">
+            <g className="map-graticule">
+              {[-120, -60, 0, 60, 120].map((longitude) => {
+                const x = ((longitude + 180) / 360) * 1000;
+                return <line key={longitude} x1={x} y1="0" x2={x} y2="500" />;
+              })}
+              {[-60, -30, 0, 30, 60].map((latitude) => {
+                const y = ((90 - latitude) / 180) * 500;
+                return <line key={latitude} x1="0" y1={y} x2="1000" y2={y} />;
+              })}
+            </g>
+            <path className="map-land" d={WORLD_PATH} />
+          </g>
+        ))}
         {home &&
           qsos.map((qso) =>
-            greatCircleSegments(home, qso).map((segment, index) => (
-              <path
-                className="contact-arc"
-                d={segment
-                  .map(
-                    (point, pointIndex) =>
-                      `${pointIndex === 0 ? "M" : "L"}${point.x.toFixed(2)},${point.y.toFixed(2)}`,
-                  )
-                  .join(" ")}
-                key={`${qso.id}-${index}`}
-              />
-            )),
+            greatCircleSegments(home, qso).flatMap((segment, index) =>
+              [-1000, 0, 1000].map((offset) => (
+                <path
+                  className="contact-arc"
+                  d={segment
+                    .map(
+                      (point, pointIndex) =>
+                        `${pointIndex === 0 ? "M" : "L"}${(point.x + offset).toFixed(2)},${point.y.toFixed(2)}`,
+                    )
+                    .join(" ")}
+                  key={`${qso.id}-${index}-${offset}`}
+                />
+              )),
+            ),
           )}
-        {home && (
+        {home && (() => {
+          const homePoint = project(home);
+          homePoint.x = nearestWrappedX(homePoint.x, center.x);
+          return (
           <g className="home-marker" aria-label="Station location">
             <circle
-              cx={project(home).x}
-              cy={project(home).y}
+              cx={homePoint.x}
+              cy={homePoint.y}
               r={6 / Math.sqrt(zoom)}
             />
             <circle
               className="home-halo"
-              cx={project(home).x}
-              cy={project(home).y}
+              cx={homePoint.x}
+              cy={homePoint.y}
               r={13 / Math.sqrt(zoom)}
             />
           </g>
-        )}
+          );
+        })()}
         {qsos.map((qso) => {
           const point = project(qso);
+          point.x = nearestWrappedX(point.x, center.x);
           const isSelected = selected?.id === qso.id;
           const isEstimated = qso.locatorSource === "entity";
           return (
@@ -1137,14 +1207,14 @@ function QsoMap({
       )}
 
       <div className="map-gesture-hint" aria-hidden="true">
-        Drag to pan · Double-click to center
+        Drag to pan · Double-click to zoom
       </div>
 
       <div className="map-tools" aria-label="Map zoom">
         <button
           type="button"
           aria-label="Zoom in"
-          onClick={() => changeZoom(zoom + 0.25)}
+          onClick={() => changeZoom(zoom * MAP_ZOOM_FACTOR)}
         >
           +
         </button>
@@ -1153,7 +1223,7 @@ function QsoMap({
           aria-label="Reset zoom"
           onClick={() => {
             setZoom(1);
-            setCenter({ x: 500, y: 250 });
+            setCenter({ x: home ? project(home).x : 500, y: 250 });
           }}
         >
           {Math.round(zoom * 100)}%
@@ -1161,7 +1231,7 @@ function QsoMap({
         <button
           type="button"
           aria-label="Zoom out"
-          onClick={() => changeZoom(zoom - 0.25)}
+          onClick={() => changeZoom(zoom / MAP_ZOOM_FACTOR)}
         >
           −
         </button>
