@@ -411,6 +411,15 @@ h3 {
   box-shadow: 0 0 0 3px rgb(240 179 92 / 0.16);
 }
 
+.legend-estimated {
+  width: 7px;
+  height: 7px;
+  border: 1px dashed #d9ffff;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 0 3px rgb(107 193 192 / 0.14);
+}
+
 .legend-path {
   width: 22px;
   height: 1px;
@@ -498,6 +507,16 @@ h3 {
   stroke-width: 1.05;
   transition: r 140ms ease;
   vector-effect: non-scaling-stroke;
+}
+
+.qso-marker.is-estimated .qso-marker-halo {
+  fill: var(--cyan);
+}
+
+.qso-marker.is-estimated .qso-marker-dot {
+  fill: var(--cyan);
+  stroke: #d9ffff;
+  stroke-dasharray: 1.5 1;
 }
 
 .qso-marker:hover .qso-marker-halo,
@@ -838,8 +857,8 @@ h3 {
   font-size: 11px;
 }
 
-.stat-strip .has-warning strong {
-  color: var(--amber);
+.stat-strip .has-estimates strong {
+  color: var(--cyan);
 }
 
 .drop-overlay {

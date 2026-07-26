@@ -31,7 +31,7 @@ type Qso = {
   qsl: string;
   lat: number;
   lon: number;
-  locatorSource: "grid" | "coordinates";
+  locatorSource: "grid" | "coordinates" | "entity";
 };
 
 type ImportResult = {
@@ -40,6 +40,12 @@ type ImportResult = {
   homeGrid: string;
   totalRecords: number;
 };
+
+type DxccLookup = (callsign: string) => {
+  country: string;
+  lat: number;
+  lon: number;
+} | null;
 
 const demoQsos: Qso[] = [
   {
@@ -356,7 +362,7 @@ function normalizeTime(value: string) {
   return `${digits.slice(0, 2)}:${digits.slice(2, 4)}`;
 }
 
-function parseAdif(text: string): ImportResult {
+function parseAdif(text: string, lookupDxcc: DxccLookup): ImportResult {
   const fields: Record<string, string>[] = [];
   let record: Record<string, string> = {};
   const tagPattern = /<([A-Z0-9_]+)(?::(\d+)(?::[^>]*)?)?>/gi;
@@ -409,8 +415,11 @@ function parseAdif(text: string): ImportResult {
     const lon = field.LON ? parseAdifCoordinate(field.LON, "lon") : null;
     const grid = (field.GRIDSQUARE || field.VUCC_GRIDS || "").split(",")[0];
     const fromGrid = grid ? gridToCoordinates(grid) : null;
+    const dxcc = lookupDxcc(field.CALL || "");
     const coordinates =
-      lat !== null && lon !== null ? { lat, lon } : fromGrid;
+      lat !== null && lon !== null
+        ? { lat, lon }
+        : fromGrid ?? (dxcc ? { lat: dxcc.lat, lon: dxcc.lon } : null);
 
     if (!coordinates) continue;
     qsos.push({
@@ -420,7 +429,10 @@ function parseAdif(text: string): ImportResult {
       mode: field.SUBMODE || field.MODE || "Unknown",
       date: normalizeDate(field.QSO_DATE || ""),
       time: normalizeTime(field.TIME_ON || ""),
-      country: field.COUNTRY || (field.DXCC ? `DXCC ${field.DXCC}` : "Unknown"),
+      country:
+        field.COUNTRY ||
+        dxcc?.country ||
+        (field.DXCC ? `DXCC ${field.DXCC}` : "Unknown"),
       grid,
       frequency: field.FREQ || "",
       rstSent: field.RST_SENT || "",
@@ -435,11 +447,21 @@ function parseAdif(text: string): ImportResult {
       lat: coordinates.lat,
       lon: coordinates.lon,
       locatorSource:
-        lat !== null && lon !== null ? "coordinates" : "grid",
+        lat !== null && lon !== null
+          ? "coordinates"
+          : fromGrid
+            ? "grid"
+            : "entity",
     });
   }
 
   return { qsos, home, homeGrid, totalRecords: fields.length };
+}
+
+function locationLabel(qso: Qso) {
+  if (qso.locatorSource === "coordinates") return "LAT/LON";
+  if (qso.locatorSource === "grid") return qso.grid || "Grid center";
+  return "Entity centroid · approximate";
 }
 
 function distanceKm(a: Coordinates, b: Coordinates) {
@@ -546,6 +568,12 @@ function standaloneApp() {
     x: ((lon + 180) / 360) * 1000,
     y: ((90 - lat) / 180) * 500,
   });
+  const locationText = (qso: Qso) =>
+    qso.locatorSource === "coordinates"
+      ? "LAT/LON"
+      : qso.locatorSource === "grid"
+        ? qso.grid || "Grid center"
+        : "Entity centroid (approximate)";
   const clampCenter = (candidate: { x: number; y: number }) => {
     const halfWidth = 500 / mapZoom;
     const halfHeight = 250 / mapZoom;
@@ -668,7 +696,10 @@ function standaloneApp() {
       marker.setAttribute("cx", String(location.x));
       marker.setAttribute("cy", String(location.y));
       marker.setAttribute("r", "5");
-      marker.setAttribute("class", "marker");
+      marker.setAttribute(
+        "class",
+        `marker${qso.locatorSource === "entity" ? " estimated" : ""}`,
+      );
       marker.setAttribute("tabindex", "0");
       marker.setAttribute("role", "button");
       marker.setAttribute("aria-label", `${qso.call}, ${qso.country}`);
@@ -680,7 +711,7 @@ function standaloneApp() {
         [qso.date, qso.time ? `${qso.time} UTC` : ""]
           .filter(Boolean)
           .join(" "),
-        qso.grid ? `Grid ${qso.grid}` : "",
+        `Location ${locationText(qso)}`,
         qso.rstSent || qso.rstReceived
           ? `RST ${qso.rstSent || "—"} / ${qso.rstReceived || "—"}`
           : "",
@@ -692,7 +723,7 @@ function standaloneApp() {
         document.querySelectorAll(".marker").forEach((item) => item.classList.remove("active"));
         marker.classList.add("active");
         const detail = document.getElementById("detail") as HTMLElement;
-        detail.innerHTML = `<strong>${safe(qso.call)}</strong><span>${safe(qso.country)} · ${safe(qso.band)} · ${safe(qso.mode)} · ${safe(qso.date)}${qso.grid ? ` · ${safe(qso.grid)}` : ""}</span>`;
+        detail.innerHTML = `<strong>${safe(qso.call)}</strong><span>${safe(qso.country)} · ${safe(qso.band)} · ${safe(qso.mode)} · ${safe(qso.date)} · ${safe(locationText(qso))}</span>`;
       };
       marker.addEventListener("mouseenter", select);
       marker.addEventListener("focus", select);
@@ -724,7 +755,7 @@ function standaloneApp() {
         );
         if (!qso) return;
         const detail = document.getElementById("detail") as HTMLElement;
-        detail.innerHTML = `<strong>${safe(qso.call)}</strong><span>${safe(qso.country)} · ${safe(qso.band)} · ${safe(qso.mode)} · ${safe(qso.date)}</span>`;
+        detail.innerHTML = `<strong>${safe(qso.call)}</strong><span>${safe(qso.country)} · ${safe(qso.band)} · ${safe(qso.mode)} · ${safe(qso.date)} · ${safe(locationText(qso))}</span>`;
         centerQso(qso);
       });
     });
@@ -745,6 +776,33 @@ function buildStandaloneHtml(
   const modes = [...new Set(qsos.map((qso) => qso.mode))].sort();
   const payload = JSON.stringify({ qsos, home }).replaceAll("<", "\\u003c");
   const worldPath = escapeHtml(WORLD_PATH);
+  const staticArcs = home
+    ? qsos
+        .map((qso) => {
+          const origin = project(home);
+          const destination = project(qso);
+          const middleX = (origin.x + destination.x) / 2;
+          const lift = Math.min(
+            82,
+            Math.abs(destination.x - origin.x) * 0.16,
+          );
+          return `<path class="arc" d="M${origin.x},${origin.y} Q${middleX},${Math.min(origin.y, destination.y) - lift} ${destination.x},${destination.y}"/>`;
+        })
+        .join("")
+    : "";
+  const staticMarkers = qsos
+    .map((qso) => {
+      const point = project(qso);
+      const classes = `marker${qso.locatorSource === "entity" ? " estimated" : ""}`;
+      const title = [
+        qso.call,
+        qso.country,
+        `${qso.band} ${qso.mode}`,
+        locationLabel(qso),
+      ].join(" · ");
+      return `<circle cx="${point.x}" cy="${point.y}" r="5" class="${classes}"><title>${escapeHtml(title)}</title></circle>`;
+    })
+    .join("");
 
   return `<!doctype html>
 <html lang="en">
@@ -754,7 +812,7 @@ function buildStandaloneHtml(
 <meta name="color-scheme" content="dark">
 <title>${escapeHtml(sourceName)} · QSO Atlas</title>
 <style>
-:root{--ink:#f2f0e8;--muted:#9ca7aa;--panel:#111a1e;--line:#26343a;--ocean:#0b1418;--land:#1c2b2f;--amber:#f0b45a;--cyan:#73c9c9}*{box-sizing:border-box}body{margin:0;background:#091115;color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:18px 28px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:18px;letter-spacing:.04em}header p{margin:2px 0 0;color:var(--muted)}.mark{display:flex;align-items:center;gap:12px}.pulse{width:12px;height:12px;border:2px solid var(--amber);border-radius:50%;box-shadow:0 0 0 5px rgba(240,180,90,.12)}.controls{display:flex;flex-wrap:wrap;gap:10px;padding:14px 28px;border-bottom:1px solid var(--line)}input,select{min-height:38px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:0 12px}input{min-width:220px}.count{margin-left:auto;align-self:center;color:var(--muted)}main{display:grid;grid-template-columns:minmax(0,1fr) 310px;min-height:calc(100vh - 132px)}.map{position:relative;min-height:580px;background:var(--ocean);overflow:hidden}.map svg{display:block;width:100%;height:100%;min-height:580px;cursor:grab;touch-action:none;user-select:none}.map svg.dragging{cursor:grabbing}.graticule{stroke:#233239;stroke-width:.55}.land{fill:var(--land);stroke:#33474d;stroke-width:.55}.arc{fill:none;stroke:var(--amber);stroke-width:1;stroke-opacity:.28}.marker{fill:var(--amber);stroke:#fff2d7;stroke-width:1.4;cursor:pointer;transition:r .15s}.marker:hover,.marker:focus,.marker.active{r:8;outline:none}.origin{fill:var(--cyan);stroke:#dff;stroke-width:2}.mapbuttons{position:absolute;display:grid;z-index:3;top:16px;right:16px;overflow:hidden;border:1px solid var(--line);border-radius:5px;background:rgba(9,17,21,.92)}.mapbuttons button{min-width:44px;height:34px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink)}.mapbuttons button:last-child{border:0}.detail{position:absolute;left:20px;bottom:20px;display:flex;gap:14px;align-items:center;max-width:calc(100% - 40px);padding:12px 15px;border:1px solid #3a4c52;border-radius:8px;background:rgba(9,17,21,.92)}.detail span{color:var(--muted)}aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto}.row{display:grid;width:100%;grid-template-columns:1.2fr 1.6fr .7fr .7fr;gap:8px;padding:13px 16px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);text-align:left;cursor:pointer}.row:hover{background:#18252a}.row span{overflow:hidden;color:var(--muted);text-overflow:ellipsis;white-space:nowrap}@media(max-width:760px){header{align-items:flex-start;padding:16px 18px}.controls{padding:12px 18px}.count{width:100%;margin-left:0}main{grid-template-columns:1fr}.map,.map svg{min-height:430px}aside{max-height:360px;border-top:1px solid var(--line);border-left:0}}
+:root{--ink:#f2f0e8;--muted:#9ca7aa;--panel:#111a1e;--line:#26343a;--ocean:#0b1418;--land:#1c2b2f;--amber:#f0b45a;--cyan:#73c9c9}*{box-sizing:border-box}body{margin:0;background:#091115;color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:18px 28px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:18px;letter-spacing:.04em}header p{margin:2px 0 0;color:var(--muted)}.mark{display:flex;align-items:center;gap:12px}.pulse{width:12px;height:12px;border:2px solid var(--amber);border-radius:50%;box-shadow:0 0 0 5px rgba(240,180,90,.12)}.controls{display:flex;flex-wrap:wrap;gap:10px;padding:14px 28px;border-bottom:1px solid var(--line)}input,select{min-height:38px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:0 12px}input{min-width:220px}.count{margin-left:auto;align-self:center;color:var(--muted)}main{display:grid;grid-template-columns:minmax(0,1fr) 310px;min-height:calc(100vh - 132px)}.map{position:relative;min-height:580px;background:var(--ocean);overflow:hidden}.map svg{display:block;width:100%;height:100%;min-height:580px;cursor:grab;touch-action:none;user-select:none}.map svg.dragging{cursor:grabbing}.graticule{stroke:#233239;stroke-width:.55}.land{fill:var(--land);stroke:#33474d;stroke-width:.55}.arc{fill:none;stroke:var(--amber);stroke-width:1;stroke-opacity:.28}.marker{fill:var(--amber);stroke:#fff2d7;stroke-width:1.4;cursor:pointer;transition:r .15s}.marker.estimated{fill:var(--cyan);stroke-dasharray:2 1}.marker:hover,.marker:focus,.marker.active{r:8;outline:none}.origin{fill:var(--cyan);stroke:#dff;stroke-width:2}.mapbuttons{position:absolute;display:grid;z-index:3;top:16px;right:16px;overflow:hidden;border:1px solid var(--line);border-radius:5px;background:rgba(9,17,21,.92)}.mapbuttons button{min-width:44px;height:34px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink)}.mapbuttons button:last-child{border:0}.detail{position:absolute;left:20px;bottom:20px;display:flex;gap:14px;align-items:center;max-width:calc(100% - 40px);padding:12px 15px;border:1px solid #3a4c52;border-radius:8px;background:rgba(9,17,21,.92)}.detail span{color:var(--muted)}aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto}.row{display:grid;width:100%;grid-template-columns:1.2fr 1.6fr .7fr .7fr;gap:8px;padding:13px 16px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);text-align:left;cursor:pointer}.row:hover{background:#18252a}.row span{overflow:hidden;color:var(--muted);text-overflow:ellipsis;white-space:nowrap}@media(max-width:760px){header{align-items:flex-start;padding:16px 18px}.controls{padding:12px 18px}.count{width:100%;margin-left:0}main{grid-template-columns:1fr}.map,.map svg{min-height:430px}aside{max-height:360px;border-top:1px solid var(--line);border-left:0}}
 </style>
 </head>
 <body>
@@ -771,7 +829,7 @@ function buildStandaloneHtml(
 <g class="graticule">${[-120, -60, 0, 60, 120].map((lon) => `<line x1="${((lon + 180) / 360) * 1000}" y1="0" x2="${((lon + 180) / 360) * 1000}" y2="500"/>`).join("")}${[-60, -30, 0, 30, 60].map((lat) => `<line x1="0" y1="${((90 - lat) / 180) * 500}" x2="1000" y2="${((90 - lat) / 180) * 500}"/>`).join("")}</g>
 <path class="land" d="${worldPath}"/>
 ${home ? `<circle class="origin" cx="${project(home).x}" cy="${project(home).y}" r="6"/>` : ""}
-<g id="map-points"></g>
+<g id="map-points">${staticArcs}${staticMarkers}</g>
 </svg>
 <div class="mapbuttons" aria-label="Map zoom">
 <button id="standalone-zoom-in" type="button" aria-label="Zoom in">+</button>
@@ -989,12 +1047,13 @@ function QsoMap({
         {qsos.map((qso) => {
           const point = project(qso);
           const isSelected = selected?.id === qso.id;
+          const isEstimated = qso.locatorSource === "entity";
           return (
             <g
-              className={`qso-marker${isSelected ? " is-selected" : ""}`}
+              className={`qso-marker${isSelected ? " is-selected" : ""}${isEstimated ? " is-estimated" : ""}`}
               key={qso.id}
               role="button"
-              aria-label={`${qso.call}, ${qso.country}, ${qso.band} ${qso.mode}`}
+              aria-label={`${qso.call}, ${qso.country}, ${qso.band} ${qso.mode}${isEstimated ? ", approximate location" : ""}`}
               tabIndex={0}
               transform={`translate(${point.x} ${point.y})`}
               onMouseEnter={(event) => showHover(qso, event)}
@@ -1051,8 +1110,8 @@ function QsoMap({
               </dd>
             </div>
             <div>
-              <dt>Grid</dt>
-              <dd>{hovered.qso.grid || "LAT/LON"}</dd>
+              <dt>Location</dt>
+              <dd>{locationLabel(hovered.qso)}</dd>
             </div>
             <div>
               <dt>Signal</dt>
@@ -1153,6 +1212,9 @@ export default function Home() {
     ? Math.max(0, ...qsos.map((qso) => distanceKm(home, qso)))
     : 0;
   const skipped = Math.max(0, totalRecords - qsos.length);
+  const estimated = qsos.filter(
+    (qso) => qso.locatorSource === "entity",
+  ).length;
 
   async function importFile(file: File) {
     setError("");
@@ -1166,7 +1228,11 @@ export default function Home() {
     }
 
     try {
-      const parsed = parseAdif(await file.text());
+      const [{ lookupDxcc }, text] = await Promise.all([
+        import("./dxcc-data"),
+        file.text(),
+      ]);
+      const parsed = parseAdif(text, lookupDxcc);
       if (!parsed.totalRecords) {
         setError("No ADIF QSO records were found in that file.");
         return;
@@ -1187,8 +1253,11 @@ export default function Home() {
       setMode("All modes");
       setSearch("");
       setSelected(parsed.qsos[0]);
+      const approximate = parsed.qsos.filter(
+        (qso) => qso.locatorSource === "entity",
+      ).length;
       setMessage(
-        `${parsed.qsos.length.toLocaleString()} of ${parsed.totalRecords.toLocaleString()} QSOs mapped locally.`,
+        `${parsed.qsos.length.toLocaleString()} of ${parsed.totalRecords.toLocaleString()} QSOs mapped locally${approximate ? ` · ${approximate.toLocaleString()} approximate` : ""}.`,
       );
     } catch {
       setError("The file could not be parsed as ADIF. Your current map was kept.");
@@ -1363,6 +1432,9 @@ export default function Home() {
                 <i className="legend-qso" /> QSO
               </span>
               <span>
+                <i className="legend-estimated" /> Estimated
+              </span>
+              <span>
                 <i className="legend-path" /> Path
               </span>
             </div>
@@ -1376,7 +1448,10 @@ export default function Home() {
           />
 
           <div className="map-footer">
-            <span>Coordinates use LAT/LON first, then Maidenhead grid centers.</span>
+            <span>
+              Locations use LAT/LON first, then Maidenhead grids, then offline
+              DXCC entity centroids.
+            </span>
             {!home && (
               <strong>Enter a home grid to draw contact paths.</strong>
             )}
@@ -1402,7 +1477,10 @@ export default function Home() {
               >
                 <span className="qso-row-main">
                   <strong>{qso.call}</strong>
-                  <small>{qso.country}</small>
+                  <small>
+                    {qso.country}
+                    {qso.locatorSource === "entity" ? " · approx." : ""}
+                  </small>
                 </span>
                 <span className="qso-row-meta">
                   <strong>{qso.band}</strong>
@@ -1442,8 +1520,8 @@ export default function Home() {
                   </dd>
                 </div>
                 <div>
-                  <dt>Grid</dt>
-                  <dd>{selected.grid || "LAT/LON"}</dd>
+                  <dt>Location</dt>
+                  <dd>{locationLabel(selected)}</dd>
                 </div>
                 <div>
                   <dt>Signal</dt>
@@ -1488,9 +1566,10 @@ export default function Home() {
             <small>{home ? " km" : ""}</small>
           </strong>
         </article>
-        <article className={skipped ? "has-warning" : ""}>
-          <span>Without coordinates</span>
-          <strong>{skipped.toLocaleString()}</strong>
+        <article className={estimated ? "has-estimates" : ""}>
+          <span>Approximate positions</span>
+          <strong>{estimated.toLocaleString()}</strong>
+          {skipped > 0 && <small>{skipped.toLocaleString()} still unmapped</small>}
         </article>
       </section>
 
