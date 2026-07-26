@@ -304,7 +304,7 @@ const demoQsos: Qso[] = [
 ];
 
 const demoHome = { lat: 47.6062, lon: -122.3321 };
-const MAX_MAP_ZOOM = 16;
+const MAX_MAP_ZOOM = 1024;
 const MAP_ZOOM_FACTOR = 1.5;
 
 function project({ lat, lon }: Coordinates) {
@@ -551,7 +551,7 @@ function standaloneApp() {
   const mode = document.getElementById("mode") as HTMLSelectElement;
   const search = document.getElementById("search") as HTMLInputElement;
   const namespace = "http://www.w3.org/2000/svg";
-  const maxMapZoom = 16;
+  const maxMapZoom = 1024;
   const zoomFactor = 1.5;
   let mapZoom = 1;
   let mapCenter = payload.home
@@ -612,12 +612,12 @@ function standaloneApp() {
     mapSvg.querySelectorAll<SVGCircleElement>(".marker").forEach((marker) => {
       marker.setAttribute(
         "r",
-        String((marker.classList.contains("active") ? 8 : 5) / Math.sqrt(mapZoom)),
+        String((marker.classList.contains("active") ? 8 : 5) / mapZoom),
       );
     });
     mapSvg.querySelector<SVGCircleElement>(".origin")?.setAttribute(
       "r",
-      String(6 / Math.sqrt(mapZoom)),
+      String(6 / mapZoom),
     );
   };
   const updateView = () => {
@@ -1103,13 +1103,13 @@ function QsoMap({
             <circle
               cx={homePoint.x}
               cy={homePoint.y}
-              r={6 / Math.sqrt(zoom)}
+              r={6 / zoom}
             />
             <circle
               className="home-halo"
               cx={homePoint.x}
               cy={homePoint.y}
-              r={13 / Math.sqrt(zoom)}
+              r={13 / zoom}
             />
           </g>
           );
@@ -1142,11 +1142,11 @@ function QsoMap({
             >
               <circle
                 className="qso-marker-halo"
-                r={(isSelected ? 12 : 8) / Math.sqrt(zoom)}
+                r={(isSelected ? 12 : 8) / zoom}
               />
               <circle
                 className="qso-marker-dot"
-                r={(isSelected ? 5.5 : 4) / Math.sqrt(zoom)}
+                r={(isSelected ? 5.5 : 4) / zoom}
               />
             </g>
           );
