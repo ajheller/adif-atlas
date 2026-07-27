@@ -638,6 +638,8 @@ function standaloneApp() {
         worldSize: number;
       }
     | null = null;
+  let dragFrame = 0;
+  let pendingDragCenter: { x: number; y: number } | null = null;
 
   const safe = (value: string) =>
     String(value)
@@ -874,9 +876,10 @@ function standaloneApp() {
         image.style.top = `${y * tileSize - centerWorldY + height / 2}px`;
         image.style.width = `${tileSize + 0.5}px`;
         image.style.height = `${tileSize + 0.5}px`;
-        image.addEventListener("load", () =>
-          mapSvg.classList.add("tiles-loaded"),
-        );
+        image.addEventListener("load", () => {
+          mapSvg.classList.add("tiles-loaded");
+          svg.replaceChildren();
+        });
         image.addEventListener("error", () => {
           image.style.display = "none";
         });
@@ -898,21 +901,19 @@ function standaloneApp() {
     };
     const origin = payload.home ? screenPoint(payload.home) : null;
     if (pathsVisible && origin && mapZoom < 96) {
-      for (const qso of filtered) {
+      const pathData = filtered.map((qso) => {
         const destination = screenPoint(qso);
-        const line = document.createElementNS(namespace, "path");
         const middleX = (origin.x + destination.x) / 2;
         const lift = Math.min(
           90,
           Math.abs(destination.x - origin.x) * 0.12,
         );
-        line.setAttribute(
-          "d",
-          `M${origin.x},${origin.y} Q${middleX},${Math.min(origin.y, destination.y) - lift} ${destination.x},${destination.y}`,
-        );
-        line.setAttribute("class", "arc");
-        tileOverlay.append(line);
-      }
+        return `M${origin.x},${origin.y} Q${middleX},${Math.min(origin.y, destination.y) - lift} ${destination.x},${destination.y}`;
+      }).join(" ");
+      const paths = document.createElementNS(namespace, "path");
+      paths.setAttribute("d", pathData);
+      paths.setAttribute("class", "arc");
+      tileOverlay.append(paths);
     }
     if (origin) {
       const homeMarker = document.createElementNS(namespace, "circle");
@@ -1121,7 +1122,7 @@ function standaloneApp() {
   });
   mapSvg.addEventListener("pointermove", (event) => {
     if (!drag || drag.pointerId !== event.pointerId) return;
-    mapCenter = point(
+    pendingDragCenter = point(
       inverseMercY(
         drag.centerMercatorY -
           (event.clientY - drag.clientY) / drag.worldSize,
@@ -1131,7 +1132,14 @@ function standaloneApp() {
         360 -
         180,
     );
-    updateView();
+    if (dragFrame) return;
+    dragFrame = requestAnimationFrame(() => {
+      dragFrame = 0;
+      if (!pendingDragCenter) return;
+      mapCenter = pendingDragCenter;
+      pendingDragCenter = null;
+      updateView();
+    });
   });
   const finishDrag = (event: globalThis.PointerEvent) => {
     if (!drag || drag.pointerId !== event.pointerId) return;
@@ -1139,6 +1147,15 @@ function standaloneApp() {
       mapSvg.releasePointerCapture(event.pointerId);
     }
     drag = null;
+    if (dragFrame) {
+      cancelAnimationFrame(dragFrame);
+      dragFrame = 0;
+    }
+    if (pendingDragCenter) {
+      mapCenter = pendingDragCenter;
+      pendingDragCenter = null;
+      updateView();
+    }
     mapSvg.classList.remove("dragging");
   };
   mapSvg.addEventListener("pointerup", finishDrag);
@@ -1203,30 +1220,24 @@ function standaloneApp() {
       const origin = isAzimuthal
         ? { x: 500, y: 250 }
         : wrappedPoint(payload.home.lat, payload.home.lon);
-      for (const qso of filtered) {
+      const pathData = filtered.map((qso) => {
         const destination = isAzimuthal
           ? azimuthalPoint(qso)
           : wrappedPoint(qso.lat, qso.lon);
-        const line = document.createElementNS(namespace, "path");
         if (isAzimuthal) {
-          line.setAttribute(
-            "d",
-            `M${origin.x},${origin.y} L${destination.x},${destination.y}`,
-          );
-        } else {
-          const middleX = (origin.x + destination.x) / 2;
-          const lift = Math.min(
-            82,
-            Math.abs(destination.x - origin.x) * 0.16,
-          );
-          line.setAttribute(
-            "d",
-            `M${origin.x},${origin.y} Q${middleX},${Math.min(origin.y, destination.y) - lift} ${destination.x},${destination.y}`,
-          );
+          return `M${origin.x},${origin.y} L${destination.x},${destination.y}`;
         }
-        line.setAttribute("class", "arc");
-        svg.append(line);
-      }
+        const middleX = (origin.x + destination.x) / 2;
+        const lift = Math.min(
+          82,
+          Math.abs(destination.x - origin.x) * 0.16,
+        );
+        return `M${origin.x},${origin.y} Q${middleX},${Math.min(origin.y, destination.y) - lift} ${destination.x},${destination.y}`;
+      }).join(" ");
+      const paths = document.createElementNS(namespace, "path");
+      paths.setAttribute("d", pathData);
+      paths.setAttribute("class", "arc");
+      svg.append(paths);
       if (isAzimuthal) {
         const originMarker = document.createElementNS(namespace, "circle");
         originMarker.setAttribute("cx", "500");
@@ -1465,7 +1476,7 @@ function buildStandaloneHtml(
 <title>${escapeHtml(sourceName)} · QSO Atlas</title>
 <style>
 :root{--ink:#f2f0e8;--muted:#9ca7aa;--panel:#111a1e;--line:#26343a;--ocean:#0b1418;--land:#1c2b2f;--amber:#f0b45a;--cyan:#73c9c9}*{box-sizing:border-box}body{display:flex;height:100dvh;margin:0;overflow:hidden;flex-direction:column;background:#091115;color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{display:flex;flex:0 0 auto;align-items:center;justify-content:space-between;gap:24px;padding:18px 28px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:18px;letter-spacing:.04em}header p{margin:2px 0 0;color:var(--muted)}.mark{display:flex;align-items:center;gap:12px}.pulse{width:12px;height:12px;border:2px solid var(--amber);border-radius:50%;box-shadow:0 0 0 5px rgba(240,180,90,.12)}.controls{display:flex;flex:0 0 auto;flex-wrap:wrap;gap:10px;padding:14px 28px;border-bottom:1px solid var(--line)}input,select{min-height:38px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:0 12px}input{min-width:220px}.count{margin-left:auto;align-self:center;color:var(--muted)}main{display:grid;min-height:0;flex:1 1 auto;grid-template-columns:minmax(0,1fr) 310px}.map{position:relative;min-height:0;background:var(--ocean);overflow:hidden}.map svg{display:block;width:100%;height:100%;min-height:0;cursor:grab;touch-action:none;user-select:none}.map svg.dragging{cursor:grabbing}.graticule{stroke:#233239;stroke-width:.55;vector-effect:non-scaling-stroke}.land{fill:var(--land);stroke:#33474d;stroke-width:.55;vector-effect:non-scaling-stroke}.azimuthal-ocean{fill:#09181d;stroke:#6d858b;stroke-width:1.4}.azimuthal-land{fill:#24373b;fill-rule:evenodd;stroke:#62787d;stroke-width:.65}.azimuthal-grid circle,.azimuthal-grid line{fill:none;stroke:#557077;stroke-width:.65;stroke-opacity:.65;vector-effect:non-scaling-stroke}.azimuthal-labels{fill:#b5c3c5;font-size:9px;text-anchor:middle;dominant-baseline:central}.arc{fill:none;stroke:var(--amber);stroke-width:1;stroke-opacity:.28;vector-effect:non-scaling-stroke}.marker{fill:var(--amber);stroke:#fff2d7;stroke-width:1.4;cursor:pointer;transition:stroke-width .15s;vector-effect:non-scaling-stroke}.marker.estimated{fill:var(--cyan);stroke-dasharray:2 1}.marker:hover,.marker:focus,.marker.active{stroke-width:2.4;outline:none}.cluster{cursor:zoom-in}.cluster-halo{fill:rgba(240,179,92,.2);stroke:#fff;stroke-width:1;vector-effect:non-scaling-stroke}.cluster-dot{fill:#a51f3b;stroke:#fff;stroke-width:2;filter:drop-shadow(0 2px 3px rgba(0,0,0,.88));vector-effect:non-scaling-stroke}.cluster-label{fill:#fff;font-weight:800;text-anchor:middle;dominant-baseline:central;pointer-events:none}.cluster:hover .cluster-dot,.cluster:focus .cluster-dot{fill:#d72f4f;stroke-width:2.6}.origin{fill:var(--cyan);stroke:#dff;stroke-width:2;vector-effect:non-scaling-stroke}.tiles-loaded .graticule,.tiles-loaded .land,.tiles-loaded .arc,.tiles-loaded .marker,.tiles-loaded .origin,.tiles-loaded .cluster{visibility:hidden}.tile-layer,#standalone-tile-overlay{position:absolute;inset:0}.tile-layer{z-index:1;overflow:hidden;pointer-events:none}.tile-layer img{position:absolute;display:block;max-width:none;border:0;user-select:none}#standalone-tile-overlay{z-index:2;width:100%;height:100%;min-height:0;overflow:visible;pointer-events:none}.screen-marker{pointer-events:auto}.attribution{position:absolute;z-index:4;right:7px;bottom:5px;padding:2px 5px;border-radius:2px;background:rgba(255,255,255,.82);color:#1e2a2d;font-size:9px;pointer-events:auto}.attribution a{color:#174a69}.mapbuttons{position:absolute;display:grid;z-index:5;top:16px;right:16px;overflow:hidden;border:1px solid var(--line);border-radius:5px;background:rgba(9,17,21,.92)}.mapbuttons button{min-width:44px;height:34px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink)}.mapbuttons button:last-child{border:0}.detail{position:absolute;z-index:4;left:20px;bottom:20px;display:flex;gap:14px;align-items:center;max-width:calc(100% - 40px);padding:12px 15px;border:1px solid #3a4c52;border-radius:8px;background:rgba(9,17,21,.92)}.detail span{color:var(--muted)}aside{min-height:0;border-left:1px solid var(--line);background:var(--panel);overflow:auto}.row{display:grid;width:100%;grid-template-columns:1.2fr 1.6fr .7fr .7fr;gap:8px;padding:13px 16px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);text-align:left;cursor:pointer}.row:hover{background:#18252a}.row span{overflow:hidden;color:var(--muted);text-overflow:ellipsis;white-space:nowrap}@media(max-width:760px){body{display:block;height:auto;min-height:100vh;overflow:auto}header{align-items:flex-start;padding:16px 18px}.controls{padding:12px 18px}.count{width:100%;margin-left:0}main{display:grid;min-height:0;grid-template-columns:1fr}.map,.map svg{min-height:430px}aside{max-height:360px;border-top:1px solid var(--line);border-left:0}}
-.arc{stroke:#a51f3b;stroke-width:2.15;stroke-opacity:.82;filter:drop-shadow(0 0 1px rgba(255,255,255,.95)) drop-shadow(0 0 1px rgba(255,255,255,.8))}.marker{fill:#dc3214;stroke:#fff;stroke-width:2;filter:drop-shadow(0 1px 2px rgba(0,0,0,.9))}.marker.estimated{fill:#007681;stroke:#fff;stroke-dasharray:2 1}.origin{fill:#007681;stroke:#fff;stroke-width:2.2;filter:drop-shadow(0 1px 2px rgba(0,0,0,.8))}.paths-hidden .arc{display:none}.path-toggle{position:absolute;z-index:5;top:16px;left:16px;min-height:34px;padding:0 10px;border:1px solid var(--line);border-radius:5px;background:rgba(9,17,21,.92);color:var(--muted);font-size:11px}.path-toggle.is-on{color:var(--ink);box-shadow:inset 3px 0 #ef6680}.path-toggle:hover{background:#18252a}
+.arc{stroke:#c21f42;stroke-width:2.35;stroke-opacity:.9;filter:none}.marker{fill:#dc3214;stroke:#fff;stroke-width:2;filter:none}.marker.estimated{fill:#007681;stroke:#fff;stroke-dasharray:2 1}.origin{fill:#007681;stroke:#fff;stroke-width:2.2;filter:none}.cluster-dot{filter:none}.paths-hidden .arc{display:none}.path-toggle{position:absolute;z-index:5;top:16px;left:16px;min-height:34px;padding:0 10px;border:1px solid var(--line);border-radius:5px;background:rgba(9,17,21,.92);color:var(--muted);font-size:11px}.path-toggle.is-on{color:var(--ink);box-shadow:inset 3px 0 #ef6680}.path-toggle:hover{background:#18252a}
 </style>
 </head>
 <body>
@@ -1687,18 +1698,20 @@ function OsmTileLayer({
           home &&
           geometry.homePoint &&
           zoom < 96 &&
-          geometry.points.map(({ qso, x, y }) => {
+          (() => {
             const start = geometry.homePoint!;
-            const middleX = (start.x + x) / 2;
-            const lift = Math.min(90, Math.abs(x - start.x) * 0.12);
-            return (
-              <path
-                className="contact-arc"
-                d={`M${start.x},${start.y} Q${middleX},${Math.min(start.y, y) - lift} ${x},${y}`}
-                key={`osm-path-${qso.id}`}
-              />
-            );
-          })}
+            const path = geometry.points
+              .map(({ x, y }) => {
+                const middleX = (start.x + x) / 2;
+                const lift = Math.min(
+                  90,
+                  Math.abs(x - start.x) * 0.12,
+                );
+                return `M${start.x},${start.y} Q${middleX},${Math.min(start.y, y) - lift} ${x},${y}`;
+              })
+              .join(" ");
+            return <path className="contact-arc" d={path} />;
+          })()}
         {geometry.homePoint && (
           <g
             className="home-marker osm-screen-marker"
@@ -1773,10 +1786,9 @@ function OsmTileLayer({
                 }
               }}
             >
-              <circle
-                className="qso-marker-halo"
-                r={isSelected ? 12 : 8}
-              />
+              {isSelected && (
+                <circle className="qso-marker-halo" r="12" />
+              )}
               <circle
                 className="qso-marker-dot"
                 r={isSelected ? 5.5 : 4}
@@ -1827,6 +1839,10 @@ function QsoMap({
     centerMercatorY: number;
     worldSize: number;
   } | null>(null);
+  const panFrameRef = useRef<number | null>(null);
+  const pendingPanCenterRef = useRef<{ x: number; y: number } | null>(
+    null,
+  );
   const [hovered, setHovered] = useState<{
     qso: Qso;
     x: number;
@@ -1961,22 +1977,46 @@ function QsoMap({
   function continuePan(event: PointerEvent<SVGSVGElement>) {
     const pan = panRef.current;
     if (!pan || pan.pointerId !== event.pointerId) return;
-    setCenter(
-      clampCenter(
-        project({
-          lon:
-            (pan.centerMercatorX -
-              (event.clientX - pan.clientX) / pan.worldSize) *
-              360 -
-            180,
-          lat: inverseMercatorY(
-            pan.centerMercatorY -
-              (event.clientY - pan.clientY) / pan.worldSize,
-          ),
-        }),
-        zoom,
-      ),
+    pendingPanCenterRef.current = clampCenter(
+      project({
+        lon:
+          (pan.centerMercatorX -
+            (event.clientX - pan.clientX) / pan.worldSize) *
+            360 -
+          180,
+        lat: inverseMercatorY(
+          pan.centerMercatorY -
+            (event.clientY - pan.clientY) / pan.worldSize,
+        ),
+      }),
+      zoom,
     );
+    if (panFrameRef.current !== null) return;
+    panFrameRef.current = requestAnimationFrame(() => {
+      panFrameRef.current = null;
+      if (!pendingPanCenterRef.current) return;
+      setCenter(pendingPanCenterRef.current);
+      pendingPanCenterRef.current = null;
+    });
+  }
+
+  useEffect(() => {
+    return () => {
+      if (panFrameRef.current !== null) {
+        cancelAnimationFrame(panFrameRef.current);
+      }
+    };
+  }, []);
+
+  function flushPendingPan() {
+    if (panFrameRef.current !== null) {
+      cancelAnimationFrame(panFrameRef.current);
+      panFrameRef.current = null;
+    }
+    if (pendingPanCenterRef.current) {
+      setCenter(pendingPanCenterRef.current);
+      pendingPanCenterRef.current = null;
+    }
   }
 
   function finishPan(event: PointerEvent<SVGSVGElement>) {
@@ -1986,6 +2026,7 @@ function QsoMap({
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     panRef.current = null;
+    flushPendingPan();
     setIsPanning(false);
   }
 
@@ -2049,25 +2090,27 @@ function QsoMap({
             <path className="map-land" d={WORLD_PATH} />
           </g>
         ))}
-        {showPaths &&
+        {!tilesReady &&
+          showPaths &&
           home &&
-          qsos.map((qso) =>
-            greatCircleSegments(home, qso).flatMap((segment, index) =>
-              [-1000, 0, 1000].map((offset) => (
-                <path
-                  className="contact-arc"
-                  d={segment
-                    .map(
-                      (point, pointIndex) =>
-                        `${pointIndex === 0 ? "M" : "L"}${(point.x + offset).toFixed(2)},${point.y.toFixed(2)}`,
-                    )
-                    .join(" ")}
-                  key={`${qso.id}-${index}-${offset}`}
-                />
-              )),
-            ),
-          )}
-        {home && (() => {
+          (() => {
+            const path = qsos
+              .flatMap((qso) =>
+                greatCircleSegments(home, qso).flatMap((segment) =>
+                  [-1000, 0, 1000].map((offset) =>
+                    segment
+                      .map(
+                        (point, pointIndex) =>
+                          `${pointIndex === 0 ? "M" : "L"}${(point.x + offset).toFixed(2)},${point.y.toFixed(2)}`,
+                      )
+                      .join(" "),
+                  ),
+                ),
+              )
+              .join(" ");
+            return <path className="contact-arc" d={path} />;
+          })()}
+        {!tilesReady && home && (() => {
           const homePoint = project(home);
           homePoint.x = nearestWrappedX(homePoint.x, center.x);
           return (
@@ -2086,7 +2129,7 @@ function QsoMap({
           </g>
           );
         })()}
-        {svgClusters.map((cluster) => {
+        {!tilesReady && svgClusters.map((cluster) => {
           if (cluster.items.length > 1) {
             const uniqueCalls = new Set(
               cluster.items.map((qso) => qso.call),
@@ -2147,10 +2190,12 @@ function QsoMap({
                 }
               }}
             >
-              <circle
-                className="qso-marker-halo"
-                r={(isSelected ? 12 : 8) / zoom}
-              />
+              {isSelected && (
+                <circle
+                  className="qso-marker-halo"
+                  r={12 / zoom}
+                />
+              )}
               <circle
                 className="qso-marker-dot"
                 r={(isSelected ? 5.5 : 4) / zoom}
@@ -2418,19 +2463,20 @@ function AzimuthalMap({
             })}
           </g>
           {showPaths &&
-            qsos.map((qso) => {
-              const point = azimuthalProject(qso, home);
+            (() => {
+              const path = qsos
+                .map((qso) => {
+                  const point = azimuthalProject(qso, home);
+                  return `M${AZIMUTHAL_CENTER.x},${AZIMUTHAL_CENTER.y} L${point.x},${point.y}`;
+                })
+                .join(" ");
               return (
-                <line
+                <path
                   className="contact-arc azimuthal-path"
-                  key={qso.id}
-                  x1={AZIMUTHAL_CENTER.x}
-                  y1={AZIMUTHAL_CENTER.y}
-                  x2={point.x}
-                  y2={point.y}
+                  d={path}
                 />
               );
-            })}
+            })()}
           {clusters.map((cluster) => {
             if (cluster.items.length > 1) {
               const uniqueCalls = new Set(
@@ -2491,10 +2537,12 @@ function AzimuthalMap({
                   }
                 }}
               >
-                <circle
-                  className="qso-marker-halo"
-                  r={(isSelected ? 12 : 8) / zoom}
-                />
+                {isSelected && (
+                  <circle
+                    className="qso-marker-halo"
+                    r={12 / zoom}
+                  />
+                )}
                 <circle
                   className="qso-marker-dot"
                   r={(isSelected ? 5.5 : 4) / zoom}

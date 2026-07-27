@@ -152,3 +152,18 @@ test("clusters nearby QSOs in live and portable maps", async () => {
   assert.ok(page.includes("CLUSTER_EXPANSION_ZOOM"));
   assert.ok(styles.includes(".qso-cluster {"));
 });
+
+test("keeps large maps responsive without GPU-heavy SVG duplication", async () => {
+  const [page, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.ok(page.includes("!tilesReady && svgClusters.map"));
+  assert.ok(page.includes("const path = geometry.points"));
+  assert.ok(page.includes("const pathData = filtered.map"));
+  assert.ok(page.includes("requestAnimationFrame"));
+  assert.ok(page.includes("svg.replaceChildren();"));
+  assert.doesNotMatch(styles, /drop-shadow/);
+  assert.ok(page.includes("filter:none"));
+});

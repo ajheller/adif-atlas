@@ -644,13 +644,10 @@ h3 {
 
 .contact-arc {
   fill: none;
-  stroke: #a51f3b;
+  stroke: #c21f42;
   stroke-linecap: round;
-  stroke-width: 2.15;
-  stroke-opacity: 0.82;
-  filter:
-    drop-shadow(0 0 1px rgb(255 255 255 / 0.95))
-    drop-shadow(0 0 1px rgb(255 255 255 / 0.8));
+  stroke-width: 2.35;
+  stroke-opacity: 0.9;
   vector-effect: non-scaling-stroke;
 }
 
@@ -658,7 +655,6 @@ h3 {
   fill: #007681;
   stroke: #fff;
   stroke-width: 2.2;
-  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.8));
   vector-effect: non-scaling-stroke;
 }
 
@@ -689,7 +685,6 @@ h3 {
   fill: #a51f3b;
   stroke: #fff;
   stroke-width: 2;
-  filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.88));
   vector-effect: non-scaling-stroke;
 }
 
@@ -722,7 +717,6 @@ h3 {
   fill: #dc3214;
   stroke: #fff;
   stroke-width: 2;
-  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.9));
   transition: r 140ms ease;
   vector-effect: non-scaling-stroke;
 }

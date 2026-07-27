@@ -50,5 +50,5 @@ test("live and standalone maps provide high-contrast, toggleable paths", async (
   assert.match(source, /aria-pressed=\{showPaths\}/);
   assert.match(source, /showPaths &&/);
   assert.match(styles, /\.path-toggle/);
-  assert.match(styles, /stroke: #a51f3b/);
+  assert.match(styles, /stroke: #c21f42/);
 });
