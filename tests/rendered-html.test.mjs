@@ -77,3 +77,18 @@ test("keeps the desktop map visible while QSO lists scroll independently", async
   assert.ok(page.includes("body{display:flex;height:100dvh"));
   assert.ok(page.includes("aside{min-height:0;"));
 });
+
+test("filters displayed QSOs by an inclusive date range", async () => {
+  const page = await readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.ok(page.includes('const [dateFrom, setDateFrom] = useState("")'));
+  assert.ok(page.includes('const [dateTo, setDateTo] = useState("")'));
+  assert.ok(page.includes('type="date"'));
+  assert.ok(page.includes("qso.date >= dateFrom"));
+  assert.ok(page.includes("qso.date <= dateTo"));
+  assert.ok(page.includes('id="date-from"'));
+  assert.ok(page.includes('id="date-to"'));
+});

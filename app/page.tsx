@@ -574,6 +574,8 @@ function standaloneApp() {
   const resultCount = document.getElementById("result-count") as HTMLElement;
   const band = document.getElementById("band") as HTMLSelectElement;
   const mode = document.getElementById("mode") as HTMLSelectElement;
+  const dateFrom = document.getElementById("date-from") as HTMLInputElement;
+  const dateTo = document.getElementById("date-to") as HTMLInputElement;
   const search = document.getElementById("search") as HTMLInputElement;
   const namespace = "http://www.w3.org/2000/svg";
   const maxMapZoom = 131072;
@@ -906,6 +908,8 @@ function standaloneApp() {
       (qso) =>
         (band.value === "All" || qso.band === band.value) &&
         (mode.value === "All" || qso.mode === mode.value) &&
+        (!dateFrom.value || (!!qso.date && qso.date >= dateFrom.value)) &&
+        (!dateTo.value || (!!qso.date && qso.date <= dateTo.value)) &&
         (!query ||
           qso.call.toLowerCase().includes(query) ||
           qso.country.toLowerCase().includes(query)),
@@ -1003,7 +1007,9 @@ function standaloneApp() {
     renderTileMap(filtered);
   };
 
-  [band, mode].forEach((element) => element.addEventListener("change", render));
+  [band, mode, dateFrom, dateTo].forEach((element) =>
+    element.addEventListener("change", render),
+  );
   search.addEventListener("input", render);
   render();
   updateView();
@@ -1017,6 +1023,12 @@ function buildStandaloneHtml(
 ) {
   const bands = [...new Set(qsos.map((qso) => qso.band))].sort();
   const modes = [...new Set(qsos.map((qso) => qso.mode))].sort();
+  const dates = qsos
+    .map((qso) => qso.date)
+    .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date))
+    .sort();
+  const earliestDate = dates[0] || "";
+  const latestDate = dates[dates.length - 1] || "";
   const payload = JSON.stringify({ qsos, home }).replaceAll("<", "\\u003c");
   const worldPath = escapeHtml(WORLD_PATH);
   const mapCenterX = home ? project(home).x : 500;
@@ -1068,6 +1080,8 @@ function buildStandaloneHtml(
 <input id="search" type="search" placeholder="Search call or country" aria-label="Search call or country">
 <select id="band" aria-label="Band"><option>All</option>${bands.map((band) => `<option>${escapeHtml(band)}</option>`).join("")}</select>
 <select id="mode" aria-label="Mode"><option>All</option>${modes.map((mode) => `<option>${escapeHtml(mode)}</option>`).join("")}</select>
+<label>From <input id="date-from" type="date" min="${earliestDate}" max="${latestDate}" aria-label="Display QSOs from date"></label>
+<label>To <input id="date-to" type="date" min="${earliestDate}" max="${latestDate}" aria-label="Display QSOs through date"></label>
 <span class="count" id="result-count"></span>
 </section>
 <main>
@@ -1713,6 +1727,8 @@ export default function Home() {
   const [totalRecords, setTotalRecords] = useState(demoQsos.length);
   const [band, setBand] = useState("All bands");
   const [mode, setMode] = useState("All modes");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Qso | null>(demoQsos[0]);
   const [message, setMessage] = useState(
@@ -1730,18 +1746,40 @@ export default function Home() {
     () => [...new Set(qsos.map((qso) => qso.mode))].sort(),
     [qsos],
   );
+  const dateBounds = useMemo(() => {
+    const dates = qsos
+      .map((qso) => qso.date)
+      .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date))
+      .sort();
+    return {
+      earliest: dates[0] || "",
+      latest: dates[dates.length - 1] || "",
+    };
+  }, [qsos]);
   const filteredQsos = useMemo(() => {
     const query = search.trim().toLowerCase();
     return qsos.filter(
       (qso) =>
         (band === "All bands" || qso.band === band) &&
         (mode === "All modes" || qso.mode === mode) &&
+        (!dateFrom || (!!qso.date && qso.date >= dateFrom)) &&
+        (!dateTo || (!!qso.date && qso.date <= dateTo)) &&
         (!query ||
           qso.call.toLowerCase().includes(query) ||
           qso.country.toLowerCase().includes(query) ||
           qso.grid.toLowerCase().includes(query)),
     );
-  }, [band, mode, qsos, search]);
+  }, [band, dateFrom, dateTo, mode, qsos, search]);
+
+  useEffect(() => {
+    if (!filteredQsos.length) {
+      if (selected) setSelected(null);
+      return;
+    }
+    if (!selected || !filteredQsos.some((qso) => qso.id === selected.id)) {
+      setSelected(filteredQsos[0]);
+    }
+  }, [filteredQsos, selected]);
 
   const countries = new Set(qsos.map((qso) => qso.country)).size;
   const farthest = home
@@ -1787,6 +1825,8 @@ export default function Home() {
       setTotalRecords(parsed.totalRecords);
       setBand("All bands");
       setMode("All modes");
+      setDateFrom("");
+      setDateTo("");
       setSearch("");
       setSelected(parsed.qsos[0]);
       const approximate = parsed.qsos.filter(
@@ -1932,6 +1972,28 @@ export default function Home() {
             maxLength={8}
             placeholder="e.g. CN87"
             onChange={(event) => updateHomeGrid(event.target.value)}
+          />
+        </label>
+
+        <label className="date-field">
+          <span>Date from</span>
+          <input
+            type="date"
+            value={dateFrom}
+            min={dateBounds.earliest || undefined}
+            max={dateTo || dateBounds.latest || undefined}
+            onChange={(event) => setDateFrom(event.target.value)}
+          />
+        </label>
+
+        <label className="date-field">
+          <span>Date to</span>
+          <input
+            type="date"
+            value={dateTo}
+            min={dateFrom || dateBounds.earliest || undefined}
+            max={dateBounds.latest || undefined}
+            onChange={(event) => setDateTo(event.target.value)}
           />
         </label>
 

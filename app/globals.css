@@ -263,7 +263,10 @@ h3 {
 
 .control-deck {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) 140px 140px 140px minmax(220px, auto);
+  grid-template-columns:
+    minmax(220px, 1fr)
+    repeat(5, minmax(116px, 140px))
+    minmax(180px, auto);
   gap: 12px;
   align-items: end;
   padding: 14px clamp(18px, 3vw, 44px);
@@ -1022,7 +1025,11 @@ h3 {
   }
 
   .control-deck {
-    grid-template-columns: minmax(220px, 1fr) 130px 130px 130px;
+    grid-template-columns: repeat(3, minmax(130px, 1fr));
+  }
+
+  .search-field {
+    grid-column: 1 / -1;
   }
 
   .privacy-note {
@@ -1052,10 +1059,6 @@ h3 {
 
   .control-deck {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .search-field {
-    grid-column: 1 / -1;
   }
 
   .workspace {
