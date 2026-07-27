@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { clusterProjectedItems } from "../app/clustering.ts";
+import {
+  clusterProjectedItems,
+  spreadOverlappingItems,
+} from "../app/clustering.ts";
 
 test("groups nearby projected QSOs and preserves distant markers", () => {
   const clusters = clusterProjectedItems(
@@ -44,4 +47,23 @@ test("returns individual points when clustering is disabled", () => {
   );
 
   assert.equal(clusters.length, 2);
+});
+
+test("fans out QSOs that share exactly the same mapped location", () => {
+  const spread = spreadOverlappingItems(
+    Array.from({ length: 12 }, (_, index) => ({
+      item: index,
+      x: 100,
+      y: 200,
+    })),
+    1,
+    16,
+  );
+
+  assert.equal(spread.length, 12);
+  assert.equal(
+    new Set(spread.map(({ x, y }) => `${x.toFixed(3)}:${y.toFixed(3)}`)).size,
+    12,
+  );
+  assert.ok(spread.every(({ x, y }) => Math.hypot(x - 100, y - 200) >= 16));
 });

@@ -13,7 +13,10 @@ import {
   useState,
 } from "react";
 import { serializeAdif } from "./adif";
-import { clusterProjectedItems } from "./clustering";
+import {
+  clusterProjectedItems,
+  spreadOverlappingItems,
+} from "./clustering";
 import {
   AZIMUTHAL_CENTER,
   AZIMUTHAL_RADIUS,
@@ -320,6 +323,7 @@ const demoHome = { lat: 47.6062, lon: -122.3321 };
 const MAX_MAP_ZOOM = 131072;
 const MAP_ZOOM_FACTOR = 1.5;
 const OSM_MAX_ZOOM = 19;
+const CLUSTER_EXPANSION_ZOOM = 12;
 
 function project({ lat, lon }: Coordinates) {
   return { x: ((lon + 180) / 360) * 1000, y: ((90 - lat) / 180) * 500 };
@@ -615,6 +619,7 @@ function standaloneApp() {
   const azimuthalRadius = 232;
   const osmMaxZoom = 19;
   const zoomFactor = 1.5;
+  const clusterExpansionZoom = 12;
   let pathsVisible = true;
   let mapZoom = 1;
   let mapCenter = payload.home
@@ -748,6 +753,40 @@ function standaloneApp() {
       nearby.qsos.push(point.qso);
     }
     return groups;
+  };
+  const spreadPoints = (
+    points: { qso: Qso; x: number; y: number }[],
+    overlapRadius: number,
+    ringSpacing: number,
+  ) => {
+    const groups = clusterPoints(points, overlapRadius);
+    const spread: { qso: Qso; x: number; y: number }[] = [];
+    for (const group of groups) {
+      if (group.qsos.length === 1) {
+        spread.push({ qso: group.qsos[0], x: group.x, y: group.y });
+        continue;
+      }
+      let itemIndex = 0;
+      let ring = 1;
+      while (itemIndex < group.qsos.length) {
+        const capacity = ring * 8;
+        const count = Math.min(
+          capacity,
+          group.qsos.length - itemIndex,
+        );
+        const radius = ringSpacing * ring;
+        for (let slot = 0; slot < count; slot += 1) {
+          const angle = -Math.PI / 2 + (slot / count) * Math.PI * 2;
+          spread.push({
+            qso: group.qsos[itemIndex++],
+            x: group.x + Math.cos(angle) * radius,
+            y: group.y + Math.sin(angle) * radius,
+          });
+        }
+        ring += 1;
+      }
+    }
+    return spread;
   };
   const locationText = (qso: Qso) =>
     qso.locatorSource === "coordinates"
@@ -883,9 +922,17 @@ function standaloneApp() {
       homeMarker.setAttribute("class", "origin screen-marker");
       tileOverlay.append(homeMarker);
     }
+    const projectedPoints = filtered.map((qso) => ({
+      qso,
+      ...screenPoint(qso),
+    }));
+    const displayPoints =
+      mapZoom >= clusterExpansionZoom
+        ? spreadPoints(projectedPoints, 4, 17)
+        : projectedPoints;
     const clusters = clusterPoints(
-      filtered.map((qso) => ({ qso, ...screenPoint(qso) })),
-      34,
+      displayPoints,
+      mapZoom >= clusterExpansionZoom ? 0 : 34,
     );
     for (const cluster of clusters) {
       const location = cluster;
@@ -1001,7 +1048,7 @@ function standaloneApp() {
   const centerCluster = (qsos: Qso[]) => {
     mapZoom = Math.min(
       mapView.value === "azimuthal" ? azimuthalMaxZoom : maxMapZoom,
-      Math.max(2, mapZoom * 2.5),
+      Math.max(clusterExpansionZoom, mapZoom * 2.5),
     );
     if (mapView.value === "azimuthal") {
       const points = qsos.map((qso) => azimuthalPoint(qso));
@@ -1190,14 +1237,23 @@ function standaloneApp() {
       }
     }
 
+    const projectedPoints = filtered.map((qso) => ({
+      qso,
+      ...(isAzimuthal
+        ? azimuthalPoint(qso)
+        : wrappedPoint(qso.lat, qso.lon)),
+    }));
+    const displayPoints =
+      mapZoom >= clusterExpansionZoom
+        ? spreadPoints(
+            projectedPoints,
+            4 / mapZoom,
+            17 / mapZoom,
+          )
+        : projectedPoints;
     const clusters = clusterPoints(
-      filtered.map((qso) => ({
-        qso,
-        ...(isAzimuthal
-          ? azimuthalPoint(qso)
-          : wrappedPoint(qso.lat, qso.lon)),
-      })),
-      30 / mapZoom,
+      displayPoints,
+      mapZoom >= clusterExpansionZoom ? 0 : 30 / mapZoom,
     );
     for (const cluster of clusters) {
       const location = cluster;
@@ -1580,13 +1636,21 @@ function OsmTileLayer({
       };
     };
     const points = qsos.map((qso) => ({ qso, ...screenPoint(qso) }));
+    const displayPoints =
+      zoom >= CLUSTER_EXPANSION_ZOOM
+        ? spreadOverlappingItems(
+            points.map(({ qso, x, y }) => ({ item: qso, x, y })),
+            4,
+            17,
+          ).map(({ item: qso, x, y }) => ({ qso, x, y }))
+        : points;
     return {
       tiles,
       tileZoom,
       points,
       clusters: clusterProjectedItems(
-        points.map(({ qso, x, y }) => ({ item: qso, x, y })),
-        34,
+        displayPoints.map(({ qso, x, y }) => ({ item: qso, x, y })),
+        zoom >= CLUSTER_EXPANSION_ZOOM ? 0 : 34,
       ),
       homePoint: home ? screenPoint(home) : null,
     };
@@ -1772,21 +1836,24 @@ function QsoMap({
   const viewWidth = 1000 / zoom;
   const viewHeight = 500 / zoom;
   const viewBox = `${center.x - viewWidth / 2} ${center.y - viewHeight / 2} ${viewWidth} ${viewHeight}`;
-  const svgClusters = useMemo(
-    () =>
-      clusterProjectedItems(
-        qsos.map((qso) => {
-          const point = project(qso);
-          return {
-            item: qso,
-            x: nearestWrappedX(point.x, center.x),
-            y: point.y,
-          };
-        }),
-        30 / zoom,
-      ),
-    [center.x, qsos, zoom],
-  );
+  const svgClusters = useMemo(() => {
+    const points = qsos.map((qso) => {
+      const point = project(qso);
+      return {
+        item: qso,
+        x: nearestWrappedX(point.x, center.x),
+        y: point.y,
+      };
+    });
+    const displayPoints =
+      zoom >= CLUSTER_EXPANSION_ZOOM
+        ? spreadOverlappingItems(points, 4 / zoom, 17 / zoom)
+        : points;
+    return clusterProjectedItems(
+      displayPoints,
+      zoom >= CLUSTER_EXPANSION_ZOOM ? 0 : 30 / zoom,
+    );
+  }, [center.x, qsos, zoom]);
 
   function clampCenter(candidate: { x: number; y: number }, level: number) {
     const halfHeight = 250 / level;
@@ -1828,7 +1895,10 @@ function QsoMap({
     const averageY =
       clusterQsos.reduce((sum, qso) => sum + mercatorY(qso.lat), 0) /
       clusterQsos.length;
-    const level = Math.min(MAX_MAP_ZOOM, Math.max(2, zoom * 2.5));
+    const level = Math.min(
+      MAX_MAP_ZOOM,
+      Math.max(CLUSTER_EXPANSION_ZOOM, zoom * 2.5),
+    );
     setHovered(null);
     setZoom(level);
     setCenter(
@@ -2158,7 +2228,7 @@ function QsoMap({
       )}
 
       <div className="map-gesture-hint" aria-hidden="true">
-        Drag to pan · Double-click to zoom
+        Select clusters to expand · Drag to pan · Double-click to zoom
       </div>
 
       <button
@@ -2222,17 +2292,20 @@ function AzimuthalMap({
     placement: "above" | "below";
   } | null>(null);
   const landPath = useMemo(() => azimuthalWorldPath(home), [home]);
-  const clusters = useMemo(
-    () =>
-      clusterProjectedItems(
-        qsos.map((qso) => {
-          const point = azimuthalProject(qso, home);
-          return { item: qso, x: point.x, y: point.y };
-        }),
-        30 / zoom,
-      ),
-    [home, qsos, zoom],
-  );
+  const clusters = useMemo(() => {
+    const points = qsos.map((qso) => {
+      const point = azimuthalProject(qso, home);
+      return { item: qso, x: point.x, y: point.y };
+    });
+    const displayPoints =
+      zoom >= CLUSTER_EXPANSION_ZOOM
+        ? spreadOverlappingItems(points, 4 / zoom, 17 / zoom)
+        : points;
+    return clusterProjectedItems(
+      displayPoints,
+      zoom >= CLUSTER_EXPANSION_ZOOM ? 0 : 30 / zoom,
+    );
+  }, [home, qsos, zoom]);
   const viewWidth = 1000 / zoom;
   const viewHeight = 500 / zoom;
   const viewBox = `${viewCenter.x - viewWidth / 2} ${viewCenter.y - viewHeight / 2} ${viewWidth} ${viewHeight}`;
@@ -2255,7 +2328,12 @@ function AzimuthalMap({
     cluster: { items: Qso[]; x: number; y: number },
   ) {
     setHovered(null);
-    setZoom((current) => Math.min(64, Math.max(2, current * 2.5)));
+    setZoom((current) =>
+      Math.min(
+        64,
+        Math.max(CLUSTER_EXPANSION_ZOOM, current * 2.5),
+      ),
+    );
     setViewCenter({ x: cluster.x, y: cluster.y });
   }
 
@@ -2533,7 +2611,7 @@ function AzimuthalMap({
       )}
 
       <div className="map-gesture-hint" aria-hidden="true">
-        QTH centered · Double-click to zoom
+        Select clusters to expand · QTH-centered projection
       </div>
 
       <button

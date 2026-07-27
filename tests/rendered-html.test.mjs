@@ -147,5 +147,8 @@ test("clusters nearby QSOs in live and portable maps", async () => {
   assert.ok(page.includes("const clusterPoints = ("));
   assert.ok(page.includes('"cluster screen-marker"'));
   assert.ok(page.includes("zoom in to expand"));
+  assert.ok(page.includes("spreadOverlappingItems("));
+  assert.ok(page.includes("const spreadPoints = ("));
+  assert.ok(page.includes("CLUSTER_EXPANSION_ZOOM"));
   assert.ok(styles.includes(".qso-cluster {"));
 });
