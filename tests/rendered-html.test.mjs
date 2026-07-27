@@ -104,3 +104,19 @@ test("offers ADIF export for the currently displayed QSOs", async () => {
   assert.ok(page.includes('id="download-adif"'));
   assert.ok(page.includes("standaloneAdif(visibleQsos)"));
 });
+
+test("filters by ADIF station and operator callsigns", async () => {
+  const page = await readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.ok(page.includes("field.STATION_CALLSIGN"));
+  assert.ok(page.includes("field.OPERATOR"));
+  assert.ok(page.includes('const [stationCall, setStationCall]'));
+  assert.ok(page.includes('const [operatorCall, setOperatorCall]'));
+  assert.ok(page.includes('id="station-call"'));
+  assert.ok(page.includes('id="operator-call"'));
+  assert.ok(page.includes('stationCall === "All station calls"'));
+  assert.ok(page.includes('operatorCall === "All operators"'));
+});

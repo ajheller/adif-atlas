@@ -10,6 +10,8 @@ export type AdifExportQso = {
   rstSent: string;
   rstReceived: string;
   name: string;
+  stationCall?: string;
+  operator?: string;
   lat: number;
   lon: number;
   locatorSource: "grid" | "coordinates" | "entity";
@@ -50,6 +52,8 @@ function fieldsForQso(qso: AdifExportQso, homeGrid: string) {
   add("RST_SENT", qso.rstSent);
   add("RST_RCVD", qso.rstReceived);
   add("NAME", qso.name);
+  add("STATION_CALLSIGN", qso.stationCall ?? "");
+  add("OPERATOR", qso.operator ?? "");
   add("MY_GRIDSQUARE", homeGrid);
 
   if (qso.locatorSource === "coordinates") {

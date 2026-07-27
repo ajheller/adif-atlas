@@ -31,6 +31,8 @@ type Qso = {
   rstReceived: string;
   name: string;
   qsl: string;
+  stationCall?: string;
+  operator?: string;
   lat: number;
   lon: number;
   locatorSource: "grid" | "coordinates" | "entity";
@@ -469,6 +471,8 @@ function parseAdif(text: string, lookupDxcc: DxccLookup): ImportResult {
       rstSent: field.RST_SENT || "",
       rstReceived: field.RST_RCVD || "",
       name: field.NAME || "",
+      stationCall: (field.STATION_CALLSIGN || "").toUpperCase(),
+      operator: (field.OPERATOR || "").toUpperCase(),
       qsl:
         field.QSL_RCVD === "Y" || field.LOTW_QSL_RCVD === "Y"
           ? "Confirmed"
@@ -577,6 +581,12 @@ function standaloneApp() {
   const resultCount = document.getElementById("result-count") as HTMLElement;
   const band = document.getElementById("band") as HTMLSelectElement;
   const mode = document.getElementById("mode") as HTMLSelectElement;
+  const stationCall = document.getElementById(
+    "station-call",
+  ) as HTMLSelectElement;
+  const operatorCall = document.getElementById(
+    "operator-call",
+  ) as HTMLSelectElement;
   const dateFrom = document.getElementById("date-from") as HTMLInputElement;
   const dateTo = document.getElementById("date-to") as HTMLInputElement;
   const downloadAdif = document.getElementById(
@@ -631,6 +641,8 @@ function standaloneApp() {
       add("RST_SENT", qso.rstSent);
       add("RST_RCVD", qso.rstReceived);
       add("NAME", qso.name);
+      add("STATION_CALLSIGN", qso.stationCall ?? "");
+      add("OPERATOR", qso.operator ?? "");
       return `${Object.entries(fields)
         .filter(([, value]) => value !== "")
         .map(([tag, value]) => adifField(tag, value))
@@ -940,6 +952,10 @@ function standaloneApp() {
       (qso) =>
         (band.value === "All" || qso.band === band.value) &&
         (mode.value === "All" || qso.mode === mode.value) &&
+        (stationCall.value === "All" ||
+          qso.stationCall === stationCall.value) &&
+        (operatorCall.value === "All" ||
+          qso.operator === operatorCall.value) &&
         (!dateFrom.value || (!!qso.date && qso.date >= dateFrom.value)) &&
         (!dateTo.value || (!!qso.date && qso.date <= dateTo.value)) &&
         (!query ||
@@ -1040,7 +1056,7 @@ function standaloneApp() {
     renderTileMap(filtered);
   };
 
-  [band, mode, dateFrom, dateTo].forEach((element) =>
+  [band, mode, stationCall, operatorCall, dateFrom, dateTo].forEach((element) =>
     element.addEventListener("change", render),
   );
   search.addEventListener("input", render);
@@ -1067,6 +1083,12 @@ function buildStandaloneHtml(
 ) {
   const bands = [...new Set(qsos.map((qso) => qso.band))].sort();
   const modes = [...new Set(qsos.map((qso) => qso.mode))].sort();
+  const stationCalls = [
+    ...new Set(qsos.map((qso) => qso.stationCall).filter(Boolean)),
+  ].sort();
+  const operatorCalls = [
+    ...new Set(qsos.map((qso) => qso.operator).filter(Boolean)),
+  ].sort();
   const dates = qsos
     .map((qso) => qso.date)
     .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date))
@@ -1124,6 +1146,8 @@ function buildStandaloneHtml(
 <input id="search" type="search" placeholder="Search call or country" aria-label="Search call or country">
 <select id="band" aria-label="Band"><option>All</option>${bands.map((band) => `<option>${escapeHtml(band)}</option>`).join("")}</select>
 <select id="mode" aria-label="Mode"><option>All</option>${modes.map((mode) => `<option>${escapeHtml(mode)}</option>`).join("")}</select>
+<select id="station-call" aria-label="Station callsign"><option>All</option>${stationCalls.map((call) => `<option>${escapeHtml(call || "")}</option>`).join("")}</select>
+<select id="operator-call" aria-label="Operator callsign"><option>All</option>${operatorCalls.map((call) => `<option>${escapeHtml(call || "")}</option>`).join("")}</select>
 <label>From <input id="date-from" type="date" min="${earliestDate}" max="${latestDate}" aria-label="Display QSOs from date"></label>
 <label>To <input id="date-to" type="date" min="${earliestDate}" max="${latestDate}" aria-label="Display QSOs through date"></label>
 <button id="download-adif" type="button">Download displayed ADIF</button>
@@ -1772,6 +1796,8 @@ export default function Home() {
   const [totalRecords, setTotalRecords] = useState(demoQsos.length);
   const [band, setBand] = useState("All bands");
   const [mode, setMode] = useState("All modes");
+  const [stationCall, setStationCall] = useState("All station calls");
+  const [operatorCall, setOperatorCall] = useState("All operators");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [search, setSearch] = useState("");
@@ -1791,6 +1817,16 @@ export default function Home() {
     () => [...new Set(qsos.map((qso) => qso.mode))].sort(),
     [qsos],
   );
+  const stationCalls = useMemo(
+    () =>
+      [...new Set(qsos.map((qso) => qso.stationCall).filter(Boolean))].sort(),
+    [qsos],
+  );
+  const operatorCalls = useMemo(
+    () =>
+      [...new Set(qsos.map((qso) => qso.operator).filter(Boolean))].sort(),
+    [qsos],
+  );
   const dateBounds = useMemo(() => {
     const dates = qsos
       .map((qso) => qso.date)
@@ -1807,6 +1843,10 @@ export default function Home() {
       (qso) =>
         (band === "All bands" || qso.band === band) &&
         (mode === "All modes" || qso.mode === mode) &&
+        (stationCall === "All station calls" ||
+          qso.stationCall === stationCall) &&
+        (operatorCall === "All operators" ||
+          qso.operator === operatorCall) &&
         (!dateFrom || (!!qso.date && qso.date >= dateFrom)) &&
         (!dateTo || (!!qso.date && qso.date <= dateTo)) &&
         (!query ||
@@ -1814,7 +1854,16 @@ export default function Home() {
           qso.country.toLowerCase().includes(query) ||
           qso.grid.toLowerCase().includes(query)),
     );
-  }, [band, dateFrom, dateTo, mode, qsos, search]);
+  }, [
+    band,
+    dateFrom,
+    dateTo,
+    mode,
+    operatorCall,
+    qsos,
+    search,
+    stationCall,
+  ]);
 
   useEffect(() => {
     if (!filteredQsos.length) {
@@ -1870,6 +1919,8 @@ export default function Home() {
       setTotalRecords(parsed.totalRecords);
       setBand("All bands");
       setMode("All modes");
+      setStationCall("All station calls");
+      setOperatorCall("All operators");
       setDateFrom("");
       setDateTo("");
       setSearch("");
@@ -2027,6 +2078,32 @@ export default function Home() {
           <select value={mode} onChange={(event) => setMode(event.target.value)}>
             <option>All modes</option>
             {modes.map((value) => (
+              <option key={value}>{value}</option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          <span>Station call</span>
+          <select
+            value={stationCall}
+            onChange={(event) => setStationCall(event.target.value)}
+          >
+            <option>All station calls</option>
+            {stationCalls.map((value) => (
+              <option key={value}>{value}</option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          <span>Operator</span>
+          <select
+            value={operatorCall}
+            onChange={(event) => setOperatorCall(event.target.value)}
+          >
+            <option>All operators</option>
+            {operatorCalls.map((value) => (
               <option key={value}>{value}</option>
             ))}
           </select>

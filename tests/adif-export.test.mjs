@@ -17,6 +17,8 @@ test("serializes only the supplied displayed QSOs as valid ADIF records", () => 
       rstSent: "-10",
       rstReceived: "-12",
       name: "Alex",
+      stationCall: "W7XYZ",
+      operator: "N7OP",
       lat: 42.5,
       lon: -71,
       locatorSource: "grid",
@@ -36,6 +38,8 @@ test("serializes only the supplied displayed QSOs as valid ADIF records", () => 
   assert.match(adif, /<QSO_DATE:8>20260720/);
   assert.match(adif, /<COMMENT:17>Displayed contact/);
   assert.match(adif, /<MY_GRIDSQUARE:4>CN87/);
+  assert.match(adif, /<STATION_CALLSIGN:5>W7XYZ/);
+  assert.match(adif, /<OPERATOR:4>N7OP/);
   assert.equal((adif.match(/<EOR>/g) ?? []).length, 1);
 });
 
