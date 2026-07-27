@@ -64,3 +64,16 @@ test("includes hover details in the live and portable maps", async () => {
   assert.ok(styles.includes(".qso-hover-card {"));
   assert.ok(styles.includes(".world-map.is-panning {"));
 });
+
+test("keeps the desktop map visible while QSO lists scroll independently", async () => {
+  const [page, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.ok(styles.includes("height: 100dvh;"));
+  assert.match(styles, /\.workspace\s*\{[^}]*min-height:\s*0;/s);
+  assert.match(styles, /\.qso-list\s*\{[^}]*overflow:\s*auto;/s);
+  assert.ok(page.includes("body{display:flex;height:100dvh"));
+  assert.ok(page.includes("aside{min-height:0;"));
+});
