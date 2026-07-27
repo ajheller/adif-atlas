@@ -674,6 +674,41 @@ h3 {
   cursor: pointer;
 }
 
+.qso-cluster {
+  cursor: zoom-in;
+}
+
+.qso-cluster-halo {
+  fill: rgb(240 179 92 / 0.2);
+  stroke: #fff;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.qso-cluster-dot {
+  fill: #a51f3b;
+  stroke: #fff;
+  stroke-width: 2;
+  filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.88));
+  vector-effect: non-scaling-stroke;
+}
+
+.qso-cluster text {
+  fill: #fff;
+  font-family: var(--font-geist-mono), "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 800;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+}
+
+.qso-cluster:hover .qso-cluster-dot,
+.qso-cluster:focus .qso-cluster-dot {
+  fill: #d72f4f;
+  stroke-width: 2.6;
+}
+
 .qso-marker-halo {
   fill: #3e1820;
   fill-opacity: 0.28;

@@ -135,3 +135,17 @@ test("offers a QTH-centered azimuthal equidistant map", async () => {
   assert.ok(styles.includes(".azimuthal-land {"));
   assert.ok(styles.includes(".map-view-toggle {"));
 });
+
+test("clusters nearby QSOs in live and portable maps", async () => {
+  const [page, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.ok(page.includes("clusterProjectedItems("));
+  assert.ok(page.includes('className="qso-cluster osm-screen-marker"'));
+  assert.ok(page.includes("const clusterPoints = ("));
+  assert.ok(page.includes('"cluster screen-marker"'));
+  assert.ok(page.includes("zoom in to expand"));
+  assert.ok(styles.includes(".qso-cluster {"));
+});
