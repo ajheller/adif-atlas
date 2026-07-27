@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { serializeAdif } from "./adif";
 import { WORLD_PATH } from "./world-path";
 
 type Coordinates = { lat: number; lon: number };
@@ -33,6 +34,7 @@ type Qso = {
   lat: number;
   lon: number;
   locatorSource: "grid" | "coordinates" | "entity";
+  adifFields?: Record<string, string>;
 };
 
 type ImportResult = {
@@ -481,6 +483,7 @@ function parseAdif(text: string, lookupDxcc: DxccLookup): ImportResult {
           : fromGrid
             ? "grid"
             : "entity",
+      adifFields: { ...field },
     });
   }
 
@@ -576,6 +579,9 @@ function standaloneApp() {
   const mode = document.getElementById("mode") as HTMLSelectElement;
   const dateFrom = document.getElementById("date-from") as HTMLInputElement;
   const dateTo = document.getElementById("date-to") as HTMLInputElement;
+  const downloadAdif = document.getElementById(
+    "download-adif",
+  ) as HTMLButtonElement;
   const search = document.getElementById("search") as HTMLInputElement;
   const namespace = "http://www.w3.org/2000/svg";
   const maxMapZoom = 131072;
@@ -606,6 +612,32 @@ function standaloneApp() {
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;");
+  const adifField = (tag: string, value: string) =>
+    `<${tag}:${Array.from(value).length}>${value}`;
+  const standaloneAdif = (qsos: Qso[]) => {
+    const records = qsos.map((qso) => {
+      const fields = { ...(qso.adifFields ?? {}) };
+      const add = (tag: string, value: string) => {
+        if (!fields[tag] && value) fields[tag] = value;
+      };
+      add("CALL", qso.call);
+      add("BAND", qso.band);
+      add("MODE", qso.mode);
+      add("QSO_DATE", qso.date.replaceAll("-", ""));
+      add("TIME_ON", qso.time.replaceAll(":", ""));
+      add("COUNTRY", qso.country);
+      add("GRIDSQUARE", qso.grid);
+      add("FREQ", qso.frequency);
+      add("RST_SENT", qso.rstSent);
+      add("RST_RCVD", qso.rstReceived);
+      add("NAME", qso.name);
+      return `${Object.entries(fields)
+        .filter(([, value]) => value !== "")
+        .map(([tag, value]) => adifField(tag, value))
+        .join(" ")} <EOR>`;
+    });
+    return `${adifField("ADIF_VER", "3.1.4")}\n${adifField("PROGRAMID", "ADIF Atlas")}\n${adifField("PROGRAMVERSION", "1.0")}\n<EOH>\n\n${records.join("\n")}\n`;
+  };
   const point = (lat: number, lon: number) => ({
     x: ((lon + 180) / 360) * 1000,
     y: ((90 - lat) / 180) * 500,
@@ -1003,6 +1035,7 @@ function standaloneApp() {
       });
     });
     resultCount.textContent = `${filtered.length} mapped QSO${filtered.length === 1 ? "" : "s"}`;
+    downloadAdif.disabled = filtered.length === 0;
     updateMarkerSizes();
     renderTileMap(filtered);
   };
@@ -1011,6 +1044,17 @@ function standaloneApp() {
     element.addEventListener("change", render),
   );
   search.addEventListener("input", render);
+  downloadAdif.addEventListener("click", () => {
+    const blob = new Blob([standaloneAdif(visibleQsos)], {
+      type: "text/plain;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "displayed-qsos.adi";
+    link.click();
+    globalThis.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
   render();
   updateView();
   globalThis.addEventListener("resize", () => renderTileMap(visibleQsos));
@@ -1082,6 +1126,7 @@ function buildStandaloneHtml(
 <select id="mode" aria-label="Mode"><option>All</option>${modes.map((mode) => `<option>${escapeHtml(mode)}</option>`).join("")}</select>
 <label>From <input id="date-from" type="date" min="${earliestDate}" max="${latestDate}" aria-label="Display QSOs from date"></label>
 <label>To <input id="date-to" type="date" min="${earliestDate}" max="${latestDate}" aria-label="Display QSOs through date"></label>
+<button id="download-adif" type="button">Download displayed ADIF</button>
 <span class="count" id="result-count"></span>
 </section>
 <main>
@@ -1875,6 +1920,20 @@ export default function Home() {
     setMessage("Portable HTML map downloaded.");
   }
 
+  function exportDisplayedAdif() {
+    const contents = serializeAdif(filteredQsos, homeGrid);
+    const blob = new Blob([contents], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${sourceName.replace(/\.(adi|adif)$/i, "").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "qso-log"}-displayed.adi`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setMessage(
+      `${filteredQsos.length.toLocaleString()} displayed QSO${filteredQsos.length === 1 ? "" : "s"} exported to ADIF.`,
+    );
+  }
+
   return (
     <main
       className={`app-shell${isDragging ? " is-dragging" : ""}`}
@@ -1929,6 +1988,14 @@ export default function Home() {
             disabled={!qsos.length}
           >
             Download HTML
+          </button>
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={exportDisplayedAdif}
+            disabled={!filteredQsos.length}
+          >
+            Export displayed ADIF
           </button>
         </div>
       </header>

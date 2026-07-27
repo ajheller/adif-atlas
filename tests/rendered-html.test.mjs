@@ -92,3 +92,15 @@ test("filters displayed QSOs by an inclusive date range", async () => {
   assert.ok(page.includes('id="date-from"'));
   assert.ok(page.includes('id="date-to"'));
 });
+
+test("offers ADIF export for the currently displayed QSOs", async () => {
+  const page = await readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.ok(page.includes("serializeAdif(filteredQsos, homeGrid)"));
+  assert.ok(page.includes("Export displayed ADIF"));
+  assert.ok(page.includes('id="download-adif"'));
+  assert.ok(page.includes("standaloneAdif(visibleQsos)"));
+});
