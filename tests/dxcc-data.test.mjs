@@ -36,3 +36,19 @@ test("maps support deep zoom and center the wrapped world on the home longitude"
   assert.match(source, /viewBox="\$\{mapCenterX - 500\} 0 1000 500"/);
   assert.match(source, /\[-1000, 0, 1000\]\.map/);
 });
+
+test("live and standalone maps provide high-contrast, toggleable paths", async () => {
+  const source = await fs.readFile(
+    new URL("../app/page.tsx", import.meta.url),
+    "utf8",
+  );
+  const styles = await fs.readFile(
+    new URL("../app/globals.css", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /id="standalone-path-toggle"/);
+  assert.match(source, /aria-pressed=\{showPaths\}/);
+  assert.match(source, /showPaths &&/);
+  assert.match(styles, /\.path-toggle/);
+  assert.match(styles, /stroke: #a51f3b/);
+});

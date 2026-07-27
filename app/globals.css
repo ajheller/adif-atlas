@@ -422,9 +422,10 @@ h3 {
 
 .legend-path {
   width: 22px;
-  height: 1px;
-  background: var(--amber);
-  opacity: 0.45;
+  height: 3px;
+  border-radius: 999px;
+  background: #a51f3b;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.8);
 }
 
 .map-stage {
@@ -529,25 +530,29 @@ h3 {
 
 .contact-arc {
   fill: none;
-  stroke: var(--amber);
+  stroke: #a51f3b;
   stroke-linecap: round;
-  stroke-width: 1.05;
-  stroke-opacity: 0.29;
+  stroke-width: 2.15;
+  stroke-opacity: 0.82;
+  filter:
+    drop-shadow(0 0 1px rgb(255 255 255 / 0.95))
+    drop-shadow(0 0 1px rgb(255 255 255 / 0.8));
   vector-effect: non-scaling-stroke;
 }
 
 .home-marker circle:first-child {
-  fill: var(--cyan);
-  stroke: #d9ffff;
-  stroke-width: 1.5;
+  fill: #007681;
+  stroke: #fff;
+  stroke-width: 2.2;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.8));
   vector-effect: non-scaling-stroke;
 }
 
 .home-halo {
-  fill: none;
-  stroke: var(--cyan);
-  stroke-width: 1;
-  stroke-opacity: 0.5;
+  fill: rgb(0 61 69 / 0.24);
+  stroke: #003d45;
+  stroke-width: 1.5;
+  stroke-opacity: 0.8;
   vector-effect: non-scaling-stroke;
 }
 
@@ -556,28 +561,31 @@ h3 {
 }
 
 .qso-marker-halo {
-  fill: var(--amber);
-  fill-opacity: 0.14;
-  stroke: none;
+  fill: #3e1820;
+  fill-opacity: 0.28;
+  stroke: #fff;
+  stroke-width: 0.8;
   transition: r 140ms ease;
+  vector-effect: non-scaling-stroke;
 }
 
 .qso-marker-dot {
-  fill: var(--amber);
-  stroke: #fff1d6;
-  stroke-width: 1.05;
+  fill: #dc3214;
+  stroke: #fff;
+  stroke-width: 2;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.9));
   transition: r 140ms ease;
   vector-effect: non-scaling-stroke;
 }
 
 .qso-marker.is-estimated .qso-marker-halo {
-  fill: var(--cyan);
+  fill: #003f46;
 }
 
 .qso-marker.is-estimated .qso-marker-dot {
-  fill: var(--cyan);
-  stroke: #d9ffff;
-  stroke-dasharray: 1.5 1;
+  fill: #007681;
+  stroke: #fff;
+  stroke-dasharray: 2 1;
 }
 
 .qso-marker:hover .qso-marker-halo,
@@ -587,8 +595,8 @@ h3 {
 }
 
 .qso-marker.is-selected .qso-marker-dot {
-  fill: var(--amber-bright);
-  stroke-width: 1.7;
+  fill: #ff4b1f;
+  stroke-width: 2.6;
 }
 
 .qso-hover-card {
@@ -685,6 +693,44 @@ h3 {
   font-size: 9px;
   letter-spacing: 0.04em;
   pointer-events: none;
+}
+
+.path-toggle {
+  position: absolute;
+  z-index: 5;
+  top: 16px;
+  left: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: rgb(8 17 20 / 0.92);
+  color: var(--muted);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+}
+
+.path-toggle span {
+  width: 18px;
+  height: 3px;
+  border-radius: 999px;
+  background: #68777a;
+}
+
+.path-toggle.is-on {
+  color: var(--ink);
+}
+
+.path-toggle.is-on span {
+  background: #ef6680;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.7);
+}
+
+.path-toggle:hover {
+  background: var(--panel-raised);
 }
 
 .map-tools {
