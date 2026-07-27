@@ -120,3 +120,18 @@ test("filters by ADIF station and operator callsigns", async () => {
   assert.ok(page.includes('stationCall === "All station calls"'));
   assert.ok(page.includes('operatorCall === "All operators"'));
 });
+
+test("offers a QTH-centered azimuthal equidistant map", async () => {
+  const [page, styles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.ok(page.includes("<AzimuthalMap"));
+  assert.ok(page.includes('aria-label="Map projection"'));
+  assert.ok(page.includes("QTH-centered azimuthal equidistant QSO map"));
+  assert.ok(page.includes('id="map-view"'));
+  assert.ok(page.includes('id="standalone-azimuthal-base"'));
+  assert.ok(styles.includes(".azimuthal-land {"));
+  assert.ok(styles.includes(".map-view-toggle {"));
+});

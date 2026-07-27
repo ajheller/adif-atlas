@@ -13,7 +13,13 @@ import {
   useState,
 } from "react";
 import { serializeAdif } from "./adif";
-import { WORLD_PATH } from "./world-path";
+import {
+  AZIMUTHAL_CENTER,
+  AZIMUTHAL_RADIUS,
+  WORLD_PATH,
+  azimuthalProject,
+  azimuthalWorldPath,
+} from "./azimuthal";
 
 type Coordinates = { lat: number; lon: number };
 
@@ -45,6 +51,8 @@ type ImportResult = {
   homeGrid: string;
   totalRecords: number;
 };
+
+type MapView = "world" | "azimuthal";
 
 type DxccLookup = (callsign: string) => {
   country: string;
@@ -581,6 +589,13 @@ function standaloneApp() {
   const resultCount = document.getElementById("result-count") as HTMLElement;
   const band = document.getElementById("band") as HTMLSelectElement;
   const mode = document.getElementById("mode") as HTMLSelectElement;
+  const mapView = document.getElementById("map-view") as HTMLSelectElement;
+  const worldBase = document.getElementById(
+    "standalone-world-base",
+  ) as unknown as SVGGElement;
+  const azimuthalBase = document.getElementById(
+    "standalone-azimuthal-base",
+  ) as unknown as SVGGElement;
   const stationCall = document.getElementById(
     "station-call",
   ) as HTMLSelectElement;
@@ -595,6 +610,8 @@ function standaloneApp() {
   const search = document.getElementById("search") as HTMLInputElement;
   const namespace = "http://www.w3.org/2000/svg";
   const maxMapZoom = 131072;
+  const azimuthalMaxZoom = 64;
+  const azimuthalRadius = 232;
   const osmMaxZoom = 19;
   const zoomFactor = 1.5;
   let pathsVisible = true;
@@ -678,6 +695,38 @@ function standaloneApp() {
         Math.round((referenceX - projected.x) / 1000) * 1000,
     };
   };
+  const azimuthalPoint = (coordinates: Coordinates) => {
+    const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
+    const latitude = toRadians(coordinates.lat);
+    const longitudeDelta = toRadians(
+      coordinates.lon - (payload.home?.lon ?? 0),
+    );
+    const centerLatitude = toRadians(payload.home?.lat ?? 0);
+    const angularDistance = Math.acos(
+      Math.max(
+        -1,
+        Math.min(
+          1,
+          Math.sin(centerLatitude) * Math.sin(latitude) +
+            Math.cos(centerLatitude) *
+              Math.cos(latitude) *
+              Math.cos(longitudeDelta),
+        ),
+      ),
+    );
+    const bearing = Math.atan2(
+      Math.sin(longitudeDelta) * Math.cos(latitude),
+      Math.cos(centerLatitude) * Math.sin(latitude) -
+        Math.sin(centerLatitude) *
+          Math.cos(latitude) *
+          Math.cos(longitudeDelta),
+    );
+    const radius = (angularDistance / Math.PI) * azimuthalRadius;
+    return {
+      x: 500 + radius * Math.sin(bearing),
+      y: 250 - radius * Math.cos(bearing),
+    };
+  };
   const locationText = (qso: Qso) =>
     qso.locatorSource === "coordinates"
       ? "LAT/LON"
@@ -707,6 +756,15 @@ function standaloneApp() {
   let visibleQsos = payload.qsos;
   const renderTileMap = (filtered: Qso[]) => {
     visibleQsos = filtered;
+    const attribution = document.getElementById("osm-attribution");
+    if (mapView.value === "azimuthal") {
+      tileLayer.replaceChildren();
+      tileOverlay.replaceChildren();
+      mapSvg.classList.remove("tiles-loaded");
+      if (attribution) attribution.style.display = "none";
+      return;
+    }
+    if (attribution) attribution.style.display = "";
     const width = mapStage.clientWidth;
     const height = mapStage.clientHeight;
     if (!width || !height) return;
@@ -839,7 +897,6 @@ function standaloneApp() {
       });
       tileOverlay.append(marker);
     }
-    const attribution = document.getElementById("osm-attribution");
     if (attribution) attribution.dataset.zoom = String(tileZoom);
   };
   const updateView = () => {
@@ -857,12 +914,21 @@ function standaloneApp() {
   };
   const centerQso = (qso: Qso) => {
     mapZoom = Math.max(mapZoom, 2);
-    mapCenter = wrappedPoint(qso.lat, qso.lon);
+    mapCenter =
+      mapView.value === "azimuthal"
+        ? { x: 500, y: 250 }
+        : wrappedPoint(qso.lat, qso.lon);
     updateView();
   };
 
   mapSvg.addEventListener("dblclick", (event) => {
     event.preventDefault();
+    if (mapView.value === "azimuthal") {
+      mapZoom = Math.min(azimuthalMaxZoom, mapZoom * zoomFactor);
+      mapCenter = { x: 500, y: 250 };
+      updateView();
+      return;
+    }
     const bounds = mapSvg.getBoundingClientRect();
     const centerLongitude = (mapCenter.x / 1000) * 360 - 180;
     const centerLatitude = 90 - (mapCenter.y / 500) * 180;
@@ -882,6 +948,7 @@ function standaloneApp() {
     updateView();
   });
   mapSvg.addEventListener("pointerdown", (event) => {
+    if (mapView.value === "azimuthal") return;
     if (mapZoom <= 1) return;
     const bounds = mapSvg.getBoundingClientRect();
     const centerLongitude = (mapCenter.x / 1000) * 360 - 180;
@@ -922,7 +989,10 @@ function standaloneApp() {
   mapSvg.addEventListener("pointerup", finishDrag);
   mapSvg.addEventListener("pointercancel", finishDrag);
   document.getElementById("standalone-zoom-in")?.addEventListener("click", () => {
-    mapZoom = Math.min(maxMapZoom, mapZoom * zoomFactor);
+    mapZoom = Math.min(
+      mapView.value === "azimuthal" ? azimuthalMaxZoom : maxMapZoom,
+      mapZoom * zoomFactor,
+    );
     updateView();
   });
   document.getElementById("standalone-zoom-out")?.addEventListener("click", () => {
@@ -931,9 +1001,12 @@ function standaloneApp() {
   });
   document.getElementById("standalone-zoom-reset")?.addEventListener("click", () => {
     mapZoom = 1;
-    mapCenter = payload.home
-      ? { x: point(payload.home.lat, payload.home.lon).x, y: 250 }
-      : { x: 500, y: 250 };
+    mapCenter =
+      mapView.value === "azimuthal"
+        ? { x: 500, y: 250 }
+        : payload.home
+          ? { x: point(payload.home.lat, payload.home.lon).x, y: 250 }
+          : { x: 500, y: 250 };
     updateView();
   });
   document.getElementById("standalone-path-toggle")?.addEventListener("click", (event) => {
@@ -963,25 +1036,53 @@ function standaloneApp() {
           qso.country.toLowerCase().includes(query)),
     );
 
+    const isAzimuthal = mapView.value === "azimuthal" && !!payload.home;
+    worldBase.style.display = isAzimuthal ? "none" : "";
+    azimuthalBase.style.display = isAzimuthal ? "" : "none";
+    if (isAzimuthal) azimuthalBase.removeAttribute("hidden");
     svg.replaceChildren();
     if (payload.home) {
-      const origin = wrappedPoint(payload.home.lat, payload.home.lon);
+      const origin = isAzimuthal
+        ? { x: 500, y: 250 }
+        : wrappedPoint(payload.home.lat, payload.home.lon);
       for (const qso of filtered) {
-        const destination = wrappedPoint(qso.lat, qso.lon);
+        const destination = isAzimuthal
+          ? azimuthalPoint(qso)
+          : wrappedPoint(qso.lat, qso.lon);
         const line = document.createElementNS(namespace, "path");
-        const middleX = (origin.x + destination.x) / 2;
-        const lift = Math.min(82, Math.abs(destination.x - origin.x) * 0.16);
-        line.setAttribute(
-          "d",
-          `M${origin.x},${origin.y} Q${middleX},${Math.min(origin.y, destination.y) - lift} ${destination.x},${destination.y}`,
-        );
+        if (isAzimuthal) {
+          line.setAttribute(
+            "d",
+            `M${origin.x},${origin.y} L${destination.x},${destination.y}`,
+          );
+        } else {
+          const middleX = (origin.x + destination.x) / 2;
+          const lift = Math.min(
+            82,
+            Math.abs(destination.x - origin.x) * 0.16,
+          );
+          line.setAttribute(
+            "d",
+            `M${origin.x},${origin.y} Q${middleX},${Math.min(origin.y, destination.y) - lift} ${destination.x},${destination.y}`,
+          );
+        }
         line.setAttribute("class", "arc");
         svg.append(line);
+      }
+      if (isAzimuthal) {
+        const originMarker = document.createElementNS(namespace, "circle");
+        originMarker.setAttribute("cx", "500");
+        originMarker.setAttribute("cy", "250");
+        originMarker.setAttribute("r", String(6 / mapZoom));
+        originMarker.setAttribute("class", "origin");
+        svg.append(originMarker);
       }
     }
 
     for (const qso of filtered) {
-      const location = wrappedPoint(qso.lat, qso.lon);
+      const location = isAzimuthal
+        ? azimuthalPoint(qso)
+        : wrappedPoint(qso.lat, qso.lon);
       const marker = document.createElementNS(namespace, "circle");
       marker.setAttribute("cx", String(location.x));
       marker.setAttribute("cy", String(location.y));
@@ -1059,6 +1160,17 @@ function standaloneApp() {
   [band, mode, stationCall, operatorCall, dateFrom, dateTo].forEach((element) =>
     element.addEventListener("change", render),
   );
+  mapView.addEventListener("change", () => {
+    mapZoom = 1;
+    mapCenter =
+      mapView.value === "azimuthal"
+        ? { x: 500, y: 250 }
+        : payload.home
+          ? { x: point(payload.home.lat, payload.home.lon).x, y: 250 }
+          : { x: 500, y: 250 };
+    render();
+    updateView();
+  });
   search.addEventListener("input", render);
   downloadAdif.addEventListener("click", () => {
     const blob = new Blob([standaloneAdif(visibleQsos)], {
@@ -1097,6 +1209,7 @@ function buildStandaloneHtml(
   const latestDate = dates[dates.length - 1] || "";
   const payload = JSON.stringify({ qsos, home }).replaceAll("<", "\\u003c");
   const worldPath = escapeHtml(WORLD_PATH);
+  const azimuthalLandPath = home ? azimuthalWorldPath(home) : "";
   const mapCenterX = home ? project(home).x : 500;
   const staticArcs = home
     ? qsos
@@ -1136,7 +1249,7 @@ function buildStandaloneHtml(
 <meta name="color-scheme" content="dark">
 <title>${escapeHtml(sourceName)} · QSO Atlas</title>
 <style>
-:root{--ink:#f2f0e8;--muted:#9ca7aa;--panel:#111a1e;--line:#26343a;--ocean:#0b1418;--land:#1c2b2f;--amber:#f0b45a;--cyan:#73c9c9}*{box-sizing:border-box}body{display:flex;height:100dvh;margin:0;overflow:hidden;flex-direction:column;background:#091115;color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{display:flex;flex:0 0 auto;align-items:center;justify-content:space-between;gap:24px;padding:18px 28px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:18px;letter-spacing:.04em}header p{margin:2px 0 0;color:var(--muted)}.mark{display:flex;align-items:center;gap:12px}.pulse{width:12px;height:12px;border:2px solid var(--amber);border-radius:50%;box-shadow:0 0 0 5px rgba(240,180,90,.12)}.controls{display:flex;flex:0 0 auto;flex-wrap:wrap;gap:10px;padding:14px 28px;border-bottom:1px solid var(--line)}input,select{min-height:38px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:0 12px}input{min-width:220px}.count{margin-left:auto;align-self:center;color:var(--muted)}main{display:grid;min-height:0;flex:1 1 auto;grid-template-columns:minmax(0,1fr) 310px}.map{position:relative;min-height:0;background:var(--ocean);overflow:hidden}.map svg{display:block;width:100%;height:100%;min-height:0;cursor:grab;touch-action:none;user-select:none}.map svg.dragging{cursor:grabbing}.graticule{stroke:#233239;stroke-width:.55;vector-effect:non-scaling-stroke}.land{fill:var(--land);stroke:#33474d;stroke-width:.55;vector-effect:non-scaling-stroke}.arc{fill:none;stroke:var(--amber);stroke-width:1;stroke-opacity:.28;vector-effect:non-scaling-stroke}.marker{fill:var(--amber);stroke:#fff2d7;stroke-width:1.4;cursor:pointer;transition:stroke-width .15s;vector-effect:non-scaling-stroke}.marker.estimated{fill:var(--cyan);stroke-dasharray:2 1}.marker:hover,.marker:focus,.marker.active{stroke-width:2.4;outline:none}.origin{fill:var(--cyan);stroke:#dff;stroke-width:2;vector-effect:non-scaling-stroke}.tiles-loaded .graticule,.tiles-loaded .land,.tiles-loaded .arc,.tiles-loaded .marker,.tiles-loaded .origin{visibility:hidden}.tile-layer,#standalone-tile-overlay{position:absolute;inset:0}.tile-layer{z-index:1;overflow:hidden;pointer-events:none}.tile-layer img{position:absolute;display:block;max-width:none;border:0;user-select:none}#standalone-tile-overlay{z-index:2;width:100%;height:100%;min-height:0;overflow:visible;pointer-events:none}.screen-marker{pointer-events:auto}.attribution{position:absolute;z-index:4;right:7px;bottom:5px;padding:2px 5px;border-radius:2px;background:rgba(255,255,255,.82);color:#1e2a2d;font-size:9px;pointer-events:auto}.attribution a{color:#174a69}.mapbuttons{position:absolute;display:grid;z-index:5;top:16px;right:16px;overflow:hidden;border:1px solid var(--line);border-radius:5px;background:rgba(9,17,21,.92)}.mapbuttons button{min-width:44px;height:34px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink)}.mapbuttons button:last-child{border:0}.detail{position:absolute;z-index:4;left:20px;bottom:20px;display:flex;gap:14px;align-items:center;max-width:calc(100% - 40px);padding:12px 15px;border:1px solid #3a4c52;border-radius:8px;background:rgba(9,17,21,.92)}.detail span{color:var(--muted)}aside{min-height:0;border-left:1px solid var(--line);background:var(--panel);overflow:auto}.row{display:grid;width:100%;grid-template-columns:1.2fr 1.6fr .7fr .7fr;gap:8px;padding:13px 16px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);text-align:left;cursor:pointer}.row:hover{background:#18252a}.row span{overflow:hidden;color:var(--muted);text-overflow:ellipsis;white-space:nowrap}@media(max-width:760px){body{display:block;height:auto;min-height:100vh;overflow:auto}header{align-items:flex-start;padding:16px 18px}.controls{padding:12px 18px}.count{width:100%;margin-left:0}main{display:grid;min-height:0;grid-template-columns:1fr}.map,.map svg{min-height:430px}aside{max-height:360px;border-top:1px solid var(--line);border-left:0}}
+:root{--ink:#f2f0e8;--muted:#9ca7aa;--panel:#111a1e;--line:#26343a;--ocean:#0b1418;--land:#1c2b2f;--amber:#f0b45a;--cyan:#73c9c9}*{box-sizing:border-box}body{display:flex;height:100dvh;margin:0;overflow:hidden;flex-direction:column;background:#091115;color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{display:flex;flex:0 0 auto;align-items:center;justify-content:space-between;gap:24px;padding:18px 28px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:18px;letter-spacing:.04em}header p{margin:2px 0 0;color:var(--muted)}.mark{display:flex;align-items:center;gap:12px}.pulse{width:12px;height:12px;border:2px solid var(--amber);border-radius:50%;box-shadow:0 0 0 5px rgba(240,180,90,.12)}.controls{display:flex;flex:0 0 auto;flex-wrap:wrap;gap:10px;padding:14px 28px;border-bottom:1px solid var(--line)}input,select{min-height:38px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:0 12px}input{min-width:220px}.count{margin-left:auto;align-self:center;color:var(--muted)}main{display:grid;min-height:0;flex:1 1 auto;grid-template-columns:minmax(0,1fr) 310px}.map{position:relative;min-height:0;background:var(--ocean);overflow:hidden}.map svg{display:block;width:100%;height:100%;min-height:0;cursor:grab;touch-action:none;user-select:none}.map svg.dragging{cursor:grabbing}.graticule{stroke:#233239;stroke-width:.55;vector-effect:non-scaling-stroke}.land{fill:var(--land);stroke:#33474d;stroke-width:.55;vector-effect:non-scaling-stroke}.azimuthal-ocean{fill:#09181d;stroke:#6d858b;stroke-width:1.4}.azimuthal-land{fill:#24373b;fill-rule:evenodd;stroke:#62787d;stroke-width:.65}.azimuthal-grid circle,.azimuthal-grid line{fill:none;stroke:#557077;stroke-width:.65;stroke-opacity:.65;vector-effect:non-scaling-stroke}.azimuthal-labels{fill:#b5c3c5;font-size:9px;text-anchor:middle;dominant-baseline:central}.arc{fill:none;stroke:var(--amber);stroke-width:1;stroke-opacity:.28;vector-effect:non-scaling-stroke}.marker{fill:var(--amber);stroke:#fff2d7;stroke-width:1.4;cursor:pointer;transition:stroke-width .15s;vector-effect:non-scaling-stroke}.marker.estimated{fill:var(--cyan);stroke-dasharray:2 1}.marker:hover,.marker:focus,.marker.active{stroke-width:2.4;outline:none}.origin{fill:var(--cyan);stroke:#dff;stroke-width:2;vector-effect:non-scaling-stroke}.tiles-loaded .graticule,.tiles-loaded .land,.tiles-loaded .arc,.tiles-loaded .marker,.tiles-loaded .origin{visibility:hidden}.tile-layer,#standalone-tile-overlay{position:absolute;inset:0}.tile-layer{z-index:1;overflow:hidden;pointer-events:none}.tile-layer img{position:absolute;display:block;max-width:none;border:0;user-select:none}#standalone-tile-overlay{z-index:2;width:100%;height:100%;min-height:0;overflow:visible;pointer-events:none}.screen-marker{pointer-events:auto}.attribution{position:absolute;z-index:4;right:7px;bottom:5px;padding:2px 5px;border-radius:2px;background:rgba(255,255,255,.82);color:#1e2a2d;font-size:9px;pointer-events:auto}.attribution a{color:#174a69}.mapbuttons{position:absolute;display:grid;z-index:5;top:16px;right:16px;overflow:hidden;border:1px solid var(--line);border-radius:5px;background:rgba(9,17,21,.92)}.mapbuttons button{min-width:44px;height:34px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink)}.mapbuttons button:last-child{border:0}.detail{position:absolute;z-index:4;left:20px;bottom:20px;display:flex;gap:14px;align-items:center;max-width:calc(100% - 40px);padding:12px 15px;border:1px solid #3a4c52;border-radius:8px;background:rgba(9,17,21,.92)}.detail span{color:var(--muted)}aside{min-height:0;border-left:1px solid var(--line);background:var(--panel);overflow:auto}.row{display:grid;width:100%;grid-template-columns:1.2fr 1.6fr .7fr .7fr;gap:8px;padding:13px 16px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);text-align:left;cursor:pointer}.row:hover{background:#18252a}.row span{overflow:hidden;color:var(--muted);text-overflow:ellipsis;white-space:nowrap}@media(max-width:760px){body{display:block;height:auto;min-height:100vh;overflow:auto}header{align-items:flex-start;padding:16px 18px}.controls{padding:12px 18px}.count{width:100%;margin-left:0}main{display:grid;min-height:0;grid-template-columns:1fr}.map,.map svg{min-height:430px}aside{max-height:360px;border-top:1px solid var(--line);border-left:0}}
 .arc{stroke:#a51f3b;stroke-width:2.15;stroke-opacity:.82;filter:drop-shadow(0 0 1px rgba(255,255,255,.95)) drop-shadow(0 0 1px rgba(255,255,255,.8))}.marker{fill:#dc3214;stroke:#fff;stroke-width:2;filter:drop-shadow(0 1px 2px rgba(0,0,0,.9))}.marker.estimated{fill:#007681;stroke:#fff;stroke-dasharray:2 1}.origin{fill:#007681;stroke:#fff;stroke-width:2.2;filter:drop-shadow(0 1px 2px rgba(0,0,0,.8))}.paths-hidden .arc{display:none}.path-toggle{position:absolute;z-index:5;top:16px;left:16px;min-height:34px;padding:0 10px;border:1px solid var(--line);border-radius:5px;background:rgba(9,17,21,.92);color:var(--muted);font-size:11px}.path-toggle.is-on{color:var(--ink);box-shadow:inset 3px 0 #ef6680}.path-toggle:hover{background:#18252a}
 </style>
 </head>
@@ -1148,6 +1261,7 @@ function buildStandaloneHtml(
 <select id="mode" aria-label="Mode"><option>All</option>${modes.map((mode) => `<option>${escapeHtml(mode)}</option>`).join("")}</select>
 <select id="station-call" aria-label="Station callsign"><option>All</option>${stationCalls.map((call) => `<option>${escapeHtml(call || "")}</option>`).join("")}</select>
 <select id="operator-call" aria-label="Operator callsign"><option>All</option>${operatorCalls.map((call) => `<option>${escapeHtml(call || "")}</option>`).join("")}</select>
+<select id="map-view" aria-label="Map projection"><option value="world">World map</option><option value="azimuthal"${home ? "" : " disabled"}>Azimuthal (QTH centered)</option></select>
 <label>From <input id="date-from" type="date" min="${earliestDate}" max="${latestDate}" aria-label="Display QSOs from date"></label>
 <label>To <input id="date-to" type="date" min="${earliestDate}" max="${latestDate}" aria-label="Display QSOs through date"></label>
 <button id="download-adif" type="button">Download displayed ADIF</button>
@@ -1156,8 +1270,25 @@ function buildStandaloneHtml(
 <main>
 <section class="map" id="standalone-map-stage" aria-label="World map of radio contacts">
 <svg id="standalone-map" viewBox="${mapCenterX - 500} 0 1000 500" preserveAspectRatio="xMidYMin meet" role="img" aria-label="World map with QSO paths">
+<defs><clipPath id="standalone-azimuthal-clip"><circle cx="500" cy="250" r="232"/></clipPath></defs>
+<g id="standalone-world-base">
+<rect class="map-ocean" x="-1000" y="0" width="3000" height="500"/>
 ${[-1000, 0, 1000].map((offset) => `<g transform="translate(${offset} 0)"><g class="graticule">${[-120, -60, 0, 60, 120].map((lon) => `<line x1="${((lon + 180) / 360) * 1000}" y1="0" x2="${((lon + 180) / 360) * 1000}" y2="500"/>`).join("")}${[-60, -30, 0, 30, 60].map((lat) => `<line x1="0" y1="${((90 - lat) / 180) * 500}" x2="1000" y2="${((90 - lat) / 180) * 500}"/>`).join("")}</g><path class="land" d="${worldPath}"/></g>`).join("")}
 ${home ? `<circle class="origin" cx="${project(home).x}" cy="${project(home).y}" r="6"/>` : ""}
+</g>
+<g id="standalone-azimuthal-base" hidden>
+<circle class="azimuthal-ocean" cx="500" cy="250" r="232"/>
+<g clip-path="url(#standalone-azimuthal-clip)">
+<path class="azimuthal-land" d="${azimuthalLandPath}"/>
+<g class="azimuthal-grid">
+${[5000, 10000, 15000, 20000].map((distance) => `<circle cx="500" cy="250" r="${((distance / 20015) * 232).toFixed(2)}"/>`).join("")}
+${Array.from({ length: 12 }, (_, index) => index * 30).map((bearing) => { const angle = (bearing * Math.PI) / 180; return `<line x1="500" y1="250" x2="${(500 + 232 * Math.sin(angle)).toFixed(2)}" y2="${(250 - 232 * Math.cos(angle)).toFixed(2)}"/>`; }).join("")}
+</g>
+</g>
+<g class="azimuthal-labels">
+${Array.from({ length: 12 }, (_, index) => index * 30).map((bearing) => { const angle = (bearing * Math.PI) / 180; const label = bearing === 0 ? "N" : bearing === 90 ? "E" : bearing === 180 ? "S" : bearing === 270 ? "W" : `${bearing}°`; return `<text x="${(500 + 243 * Math.sin(angle)).toFixed(2)}" y="${(250 - 243 * Math.cos(angle)).toFixed(2)}">${label}</text>`; }).join("")}
+</g>
+</g>
 <g id="map-points">${staticArcs}${staticMarkers}</g>
 </svg>
 <div class="tile-layer" id="standalone-tiles"></div>
@@ -1788,6 +1919,319 @@ function QsoMap({
   );
 }
 
+function AzimuthalMap({
+  qsos,
+  home,
+  selected,
+  onSelect,
+}: {
+  qsos: Qso[];
+  home: Coordinates;
+  selected: Qso | null;
+  onSelect: (qso: Qso) => void;
+}) {
+  const [zoom, setZoom] = useState(1);
+  const [showPaths, setShowPaths] = useState(true);
+  const [hovered, setHovered] = useState<{
+    qso: Qso;
+    x: number;
+    y: number;
+    placement: "above" | "below";
+  } | null>(null);
+  const landPath = useMemo(() => azimuthalWorldPath(home), [home]);
+  const viewWidth = 1000 / zoom;
+  const viewHeight = 500 / zoom;
+  const viewBox = `${AZIMUTHAL_CENTER.x - viewWidth / 2} ${AZIMUTHAL_CENTER.y - viewHeight / 2} ${viewWidth} ${viewHeight}`;
+  const distanceRings = [5000, 10000, 15000, 20000];
+  const circumference = 40030;
+  const bearings = Array.from({ length: 12 }, (_, index) => index * 30);
+
+  useEffect(() => {
+    setZoom(1);
+  }, [home]);
+
+  function changeZoom(nextZoom: number) {
+    setZoom(Math.max(1, Math.min(64, nextZoom)));
+  }
+
+  function showHover(
+    qso: Qso,
+    event: MouseEvent<SVGGElement> | FocusEvent<SVGGElement>,
+  ) {
+    const markerBounds = event.currentTarget.getBoundingClientRect();
+    const mapBounds =
+      event.currentTarget.ownerSVGElement?.getBoundingClientRect();
+    if (!mapBounds) return;
+    const cardWidth = Math.min(280, Math.max(220, mapBounds.width - 24));
+    const minimumX = cardWidth / 2 + 12;
+    const maximumX = Math.max(minimumX, mapBounds.width - minimumX);
+    const markerX =
+      markerBounds.left + markerBounds.width / 2 - mapBounds.left;
+    const markerY =
+      markerBounds.top + markerBounds.height / 2 - mapBounds.top;
+    setHovered({
+      qso,
+      x: Math.max(minimumX, Math.min(maximumX, markerX)),
+      y: markerY,
+      placement: markerY < 170 ? "below" : "above",
+    });
+  }
+
+  return (
+    <div className="map-stage azimuthal-stage">
+      <svg
+        className="world-map azimuthal-map"
+        viewBox={viewBox}
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        aria-label={`QTH-centered azimuthal map showing ${qsos.length} mapped QSOs`}
+        onDoubleClick={(event) => {
+          event.preventDefault();
+          changeZoom(zoom * MAP_ZOOM_FACTOR);
+        }}
+      >
+        <title>QTH-centered azimuthal equidistant QSO map</title>
+        <desc>
+          Direction from the center shows true initial bearing from the QTH.
+          Radial distance represents great-circle distance.
+        </desc>
+        <defs>
+          <clipPath id="azimuthal-globe-clip">
+            <circle
+              cx={AZIMUTHAL_CENTER.x}
+              cy={AZIMUTHAL_CENTER.y}
+              r={AZIMUTHAL_RADIUS}
+            />
+          </clipPath>
+        </defs>
+        <circle
+          className="azimuthal-ocean"
+          cx={AZIMUTHAL_CENTER.x}
+          cy={AZIMUTHAL_CENTER.y}
+          r={AZIMUTHAL_RADIUS}
+        />
+        <g clipPath="url(#azimuthal-globe-clip)">
+          <path className="azimuthal-land" d={landPath} />
+          <g className="azimuthal-grid" aria-hidden="true">
+            {distanceRings.map((distance) => (
+              <circle
+                key={distance}
+                cx={AZIMUTHAL_CENTER.x}
+                cy={AZIMUTHAL_CENTER.y}
+                r={(distance / (circumference / 2)) * AZIMUTHAL_RADIUS}
+              />
+            ))}
+            {bearings.map((bearing) => {
+              const angle = (bearing * Math.PI) / 180;
+              return (
+                <line
+                  key={bearing}
+                  x1={AZIMUTHAL_CENTER.x}
+                  y1={AZIMUTHAL_CENTER.y}
+                  x2={AZIMUTHAL_CENTER.x + AZIMUTHAL_RADIUS * Math.sin(angle)}
+                  y2={AZIMUTHAL_CENTER.y - AZIMUTHAL_RADIUS * Math.cos(angle)}
+                />
+              );
+            })}
+          </g>
+          {showPaths &&
+            qsos.map((qso) => {
+              const point = azimuthalProject(qso, home);
+              return (
+                <line
+                  className="contact-arc azimuthal-path"
+                  key={qso.id}
+                  x1={AZIMUTHAL_CENTER.x}
+                  y1={AZIMUTHAL_CENTER.y}
+                  x2={point.x}
+                  y2={point.y}
+                />
+              );
+            })}
+          {qsos.map((qso) => {
+            const point = azimuthalProject(qso, home);
+            const isSelected = selected?.id === qso.id;
+            const isEstimated = qso.locatorSource === "entity";
+            return (
+              <g
+                className={`qso-marker${isSelected ? " is-selected" : ""}${isEstimated ? " is-estimated" : ""}`}
+                key={qso.id}
+                role="button"
+                aria-label={`${qso.call}, ${Math.round(point.bearing)} degrees, ${Math.round(point.distanceKm).toLocaleString()} kilometers`}
+                tabIndex={0}
+                transform={`translate(${point.x} ${point.y})`}
+                onMouseEnter={(event) => showHover(qso, event)}
+                onMouseLeave={() => setHovered(null)}
+                onFocus={(event) => showHover(qso, event)}
+                onBlur={() => setHovered(null)}
+                onClick={() => onSelect(qso)}
+                onKeyDown={(event: KeyboardEvent<SVGGElement>) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onSelect(qso);
+                  }
+                }}
+              >
+                <circle
+                  className="qso-marker-halo"
+                  r={(isSelected ? 12 : 8) / zoom}
+                />
+                <circle
+                  className="qso-marker-dot"
+                  r={(isSelected ? 5.5 : 4) / zoom}
+                />
+              </g>
+            );
+          })}
+          <g className="home-marker" aria-label="Station location at map center">
+            <circle
+              cx={AZIMUTHAL_CENTER.x}
+              cy={AZIMUTHAL_CENTER.y}
+              r={6 / zoom}
+            />
+            <circle
+              className="home-halo"
+              cx={AZIMUTHAL_CENTER.x}
+              cy={AZIMUTHAL_CENTER.y}
+              r={13 / zoom}
+            />
+          </g>
+        </g>
+        {zoom === 1 && (
+          <g className="azimuthal-labels" aria-hidden="true">
+            {bearings.map((bearing) => {
+              const angle = (bearing * Math.PI) / 180;
+              const label =
+                bearing === 0
+                  ? "N"
+                  : bearing === 90
+                    ? "E"
+                    : bearing === 180
+                      ? "S"
+                      : bearing === 270
+                        ? "W"
+                        : `${bearing}°`;
+              return (
+                <text
+                  key={bearing}
+                  x={
+                    AZIMUTHAL_CENTER.x +
+                    (AZIMUTHAL_RADIUS + 11) * Math.sin(angle)
+                  }
+                  y={
+                    AZIMUTHAL_CENTER.y -
+                    (AZIMUTHAL_RADIUS + 11) * Math.cos(angle)
+                  }
+                >
+                  {label}
+                </text>
+              );
+            })}
+            {distanceRings.slice(0, -1).map((distance) => (
+              <text
+                className="azimuthal-distance-label"
+                key={distance}
+                x={
+                  AZIMUTHAL_CENTER.x +
+                  (distance / (circumference / 2)) * AZIMUTHAL_RADIUS +
+                  3
+                }
+                y={AZIMUTHAL_CENTER.y - 3}
+              >
+                {distance / 1000}k km
+              </text>
+            ))}
+          </g>
+        )}
+      </svg>
+
+      {hovered && (
+        <div
+          className={`qso-hover-card is-${hovered.placement}`}
+          style={{ left: hovered.x, top: hovered.y }}
+          role="tooltip"
+        >
+          <div className="qso-hover-heading">
+            <div>
+              <strong>{hovered.qso.call}</strong>
+              <span>{hovered.qso.country}</span>
+            </div>
+            <small>{hovered.qso.qsl || "Unconfirmed"}</small>
+          </div>
+          <dl>
+            <div>
+              <dt>Bearing</dt>
+              <dd>
+                {Math.round(azimuthalProject(hovered.qso, home).bearing)}°
+              </dd>
+            </div>
+            <div>
+              <dt>Distance</dt>
+              <dd>
+                {Math.round(
+                  azimuthalProject(hovered.qso, home).distanceKm,
+                ).toLocaleString()}{" "}
+                km
+              </dd>
+            </div>
+            <div>
+              <dt>Band / mode</dt>
+              <dd>
+                {hovered.qso.band} · {hovered.qso.mode}
+              </dd>
+            </div>
+            <div>
+              <dt>Date / time</dt>
+              <dd>
+                {hovered.qso.date || "—"}
+                {hovered.qso.time ? ` · ${hovered.qso.time}Z` : ""}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      )}
+
+      <div className="map-gesture-hint" aria-hidden="true">
+        QTH centered · Double-click to zoom
+      </div>
+
+      <button
+        className={`path-toggle${showPaths ? " is-on" : ""}`}
+        type="button"
+        aria-pressed={showPaths}
+        onClick={() => setShowPaths((current) => !current)}
+      >
+        <span aria-hidden="true" />
+        Paths {showPaths ? "on" : "off"}
+      </button>
+
+      <div className="map-tools" aria-label="Map zoom">
+        <button
+          type="button"
+          aria-label="Zoom in"
+          onClick={() => changeZoom(zoom * MAP_ZOOM_FACTOR)}
+        >
+          +
+        </button>
+        <button
+          type="button"
+          aria-label="Reset zoom"
+          onClick={() => setZoom(1)}
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+        <button
+          type="button"
+          aria-label="Zoom out"
+          onClick={() => changeZoom(zoom / MAP_ZOOM_FACTOR)}
+        >
+          −
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [qsos, setQsos] = useState(demoQsos);
   const [home, setHome] = useState<Coordinates | null>(demoHome);
@@ -1802,6 +2246,7 @@ export default function Home() {
   const [dateTo, setDateTo] = useState("");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Qso | null>(demoQsos[0]);
+  const [mapView, setMapView] = useState<MapView>("world");
   const [message, setMessage] = useState(
     "Demo data is loaded. Import an ADIF file to map your log.",
   );
@@ -1874,6 +2319,10 @@ export default function Home() {
       setSelected(filteredQsos[0]);
     }
   }, [filteredQsos, selected]);
+
+  useEffect(() => {
+    if (!home && mapView === "azimuthal") setMapView("world");
+  }, [home, mapView]);
 
   const countries = new Set(qsos.map((qso) => qso.country)).size;
   const farthest = home
@@ -2166,33 +2615,68 @@ export default function Home() {
                 {filteredQsos.length === 1 ? "" : "s"}
               </h2>
             </div>
-            <div className="legend" aria-label="Map legend">
-              <span>
-                <i className="legend-home" /> Home
-              </span>
-              <span>
-                <i className="legend-qso" /> QSO
-              </span>
-              <span>
-                <i className="legend-estimated" /> Estimated
-              </span>
-              <span>
-                <i className="legend-path" /> Path
-              </span>
+            <div className="map-header-actions">
+              <div
+                className="map-view-toggle"
+                role="group"
+                aria-label="Map projection"
+              >
+                <button
+                  className={mapView === "world" ? "is-active" : ""}
+                  type="button"
+                  aria-pressed={mapView === "world"}
+                  onClick={() => setMapView("world")}
+                >
+                  World
+                </button>
+                <button
+                  className={mapView === "azimuthal" ? "is-active" : ""}
+                  type="button"
+                  aria-pressed={mapView === "azimuthal"}
+                  disabled={!home}
+                  onClick={() => setMapView("azimuthal")}
+                >
+                  Azimuthal
+                </button>
+              </div>
+              <div className="legend" aria-label="Map legend">
+                <span>
+                  <i className="legend-home" /> Home
+                </span>
+                <span>
+                  <i className="legend-qso" /> QSO
+                </span>
+                <span>
+                  <i className="legend-estimated" /> Estimated
+                </span>
+                <span>
+                  <i className="legend-path" /> Path
+                </span>
+              </div>
             </div>
           </div>
 
-          <QsoMap
-            qsos={filteredQsos}
-            home={home}
-            selected={selected}
-            onSelect={setSelected}
-          />
+          {mapView === "azimuthal" && home ? (
+            <AzimuthalMap
+              qsos={filteredQsos}
+              home={home}
+              selected={selected}
+              onSelect={setSelected}
+            />
+          ) : (
+            <QsoMap
+              qsos={filteredQsos}
+              home={home}
+              selected={selected}
+              onSelect={setSelected}
+            />
+          )}
 
           <div className="map-footer">
             <span>
-              Locations use LAT/LON first, then Maidenhead grids, then offline
-              DXCC entity centroids.
+              {mapView === "azimuthal"
+                ? "Azimuthal equidistant projection: bearing radiates from the QTH and distance follows the rings."
+                : "Locations use LAT/LON first, then Maidenhead grids, then offline DXCC entity centroids."}
             </span>
             {!home && (
               <strong>Enter a home grid to draw contact paths.</strong>

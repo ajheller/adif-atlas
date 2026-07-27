@@ -389,6 +389,49 @@ h3 {
   border-bottom: 1px solid var(--line);
 }
 
+.map-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 20px;
+}
+
+.map-view-toggle {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #0a1418;
+}
+
+.map-view-toggle button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.map-view-toggle button:last-child {
+  border-right: 0;
+}
+
+.map-view-toggle button:hover:not(:disabled),
+.map-view-toggle button.is-active {
+  background: var(--panel-raised);
+  color: var(--amber-bright);
+}
+
+.map-view-toggle button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
 .legend {
   gap: 18px;
   color: var(--muted);
@@ -517,6 +560,68 @@ h3 {
 
 .world-map.is-panning {
   cursor: grabbing;
+}
+
+.azimuthal-stage {
+  background:
+    radial-gradient(circle at center, rgb(25 49 55 / 0.44), transparent 60%),
+    #071014;
+}
+
+.azimuthal-map {
+  cursor: zoom-in;
+}
+
+.azimuthal-ocean {
+  fill: #09181d;
+  stroke: #6d858b;
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+}
+
+.azimuthal-land {
+  fill: #24373b;
+  fill-rule: evenodd;
+  stroke: #62787d;
+  stroke-width: 0.65;
+  vector-effect: non-scaling-stroke;
+}
+
+.azimuthal-grid circle,
+.azimuthal-grid line {
+  fill: none;
+  stroke: #557077;
+  stroke-width: 0.65;
+  stroke-opacity: 0.72;
+  vector-effect: non-scaling-stroke;
+}
+
+.azimuthal-grid line {
+  stroke-opacity: 0.42;
+}
+
+.azimuthal-path {
+  stroke-width: 1.7;
+}
+
+.azimuthal-labels {
+  fill: #b5c3c5;
+  font-family: var(--font-geist-mono), "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.azimuthal-labels text:nth-child(3n + 1) {
+  fill: var(--amber-bright);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.azimuthal-distance-label {
+  fill: #8fa1a4;
+  font-size: 7px;
+  text-anchor: start;
 }
 
 .map-ocean {
@@ -1118,6 +1223,13 @@ h3 {
   .map-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .map-header-actions {
+    width: 100%;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
   }
 
   .legend {
