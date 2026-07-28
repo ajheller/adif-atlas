@@ -326,6 +326,12 @@ const OSM_MAX_ZOOM = 19;
 const CLUSTER_EXPANSION_ZOOM = 12;
 const LARGE_LOG_THRESHOLD = 500;
 
+function workshopHref() {
+  return window.location.hostname.endsWith("github.io")
+    ? "./workshop.html"
+    : "/workshop";
+}
+
 function project({ lat, lon }: Coordinates) {
   return { x: ((lon + 180) / 360) * 1000, y: ((90 - lat) / 180) * 500 };
 }
@@ -3045,6 +3051,15 @@ export default function Home() {
         </div>
 
         <div className="top-actions">
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={() => {
+              window.location.href = workshopHref();
+            }}
+          >
+            Log Workshop
+          </button>
           <input
             ref={fileInput}
             className="visually-hidden"

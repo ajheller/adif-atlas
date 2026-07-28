@@ -5,6 +5,9 @@ for turning an amateur-radio ADIF log into
 an interactive world map. ADIF parsing happens entirely in the browser; the log
 is never uploaded or stored by the app.
 
+The included ADIF Log Workshop provides a map-free workspace for combining and
+cleaning logs.
+
 ## What it does
 
 - Imports `.adi` and `.adif` files up to 25 MB
@@ -15,6 +18,11 @@ is never uploaded or stored by the app.
 - Filters contacts by callsign, country, grid, band, and mode
 - Shows QSO details, distance, coverage, and mapping statistics
 - Downloads the current log as one self-contained interactive HTML file
+- Loads and merges multiple ADIF files in the Log Workshop
+- Filters, selects, excludes, restores, and deduplicates QSO records
+- Exports retained or currently displayed QSOs
+- Removes application-specific fields or creates a minimal portable ADIF
+- Supports exact custom field selection before export
 
 When a QSO has no coordinates or valid Maidenhead locator, QSO Atlas uses its
 callsign prefix to place it at an approximate DXCC entity centroid. If the log
