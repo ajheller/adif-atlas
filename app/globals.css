@@ -955,6 +955,9 @@ h3 {
 
 .qso-row {
   display: grid;
+  content-visibility: auto;
+  contain: layout paint style;
+  contain-intrinsic-size: auto 64px;
   grid-template-columns: minmax(0, 1.3fr) 0.65fr 0.85fr;
   gap: 12px;
   align-items: center;

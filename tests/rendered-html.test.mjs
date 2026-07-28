@@ -159,11 +159,15 @@ test("keeps large maps responsive without GPU-heavy SVG duplication", async () =
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
 
-  assert.ok(page.includes("!tilesReady && svgClusters.map"));
+  assert.ok(page.includes("!tilesReady && visibleSvgClusters.map"));
   assert.ok(page.includes("const path = geometry.points"));
   assert.ok(page.includes("const pathData = filtered.map"));
+  assert.ok(page.includes("LARGE_LOG_THRESHOLD"));
+  assert.ok(page.includes("payload.qsos.length <= largeLogThreshold"));
+  assert.ok(page.includes("const candidatePoints ="));
   assert.ok(page.includes("requestAnimationFrame"));
   assert.ok(page.includes("svg.replaceChildren();"));
+  assert.ok(styles.includes("content-visibility: auto"));
   assert.doesNotMatch(styles, /drop-shadow/);
   assert.ok(page.includes("filter:none"));
 });
