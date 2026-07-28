@@ -144,6 +144,61 @@ export function parseWorkshopAdif(
   return records;
 }
 
+export async function parseWorkshopAdifAsync(
+  text: string,
+  source: string,
+  idPrefix = source,
+  onProgress?: (progress: number) => void,
+) {
+  const records: WorkshopRecord[] = [];
+  let current: Record<string, string> = {};
+  let inHeader = /<EOH(?:\s|>)/i.test(text);
+  let cursor = 0;
+  let sequence = 0;
+  let tagsSinceYield = 0;
+
+  while (cursor < text.length) {
+    const open = text.indexOf("<", cursor);
+    if (open < 0) break;
+    const tag = readTag(text, open);
+    if (!tag) {
+      cursor = open + 1;
+      continue;
+    }
+    cursor = tag.next;
+
+    if (tag.name === "EOH") {
+      inHeader = false;
+      current = {};
+    } else if (tag.name === "EOR") {
+      if (Object.keys(current).length) {
+        records.push({
+          id: `${idPrefix}-${sequence}`,
+          source,
+          fields: current,
+        });
+        sequence += 1;
+      }
+      current = {};
+      inHeader = false;
+    } else if (!inHeader) {
+      current[tag.name] = tag.value;
+    }
+
+    tagsSinceYield += 1;
+    if (tagsSinceYield >= 150) {
+      tagsSinceYield = 0;
+      onProgress?.(Math.min(1, cursor / Math.max(1, text.length)));
+      await new Promise<void>((resolve) => {
+        globalThis.setTimeout(resolve, 0);
+      });
+    }
+  }
+
+  onProgress?.(1);
+  return records;
+}
+
 function field(tag: string, value: string) {
   return `<${tag}:${Array.from(value).length}>${value}`;
 }

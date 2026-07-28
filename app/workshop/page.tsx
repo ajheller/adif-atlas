@@ -15,7 +15,7 @@ import {
   fieldsForCleanup,
   formatAdifDate,
   formatAdifTime,
-  parseWorkshopAdif,
+  parseWorkshopAdifAsync,
   serializeWorkshopAdif,
   type WorkshopRecord,
 } from "../adif-workshop";
@@ -38,6 +38,25 @@ function mapHref() {
     : "/";
 }
 
+function readFileWithProgress(
+  file: File,
+  onProgress: (progress: number) => void,
+) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("progress", (event) => {
+      if (event.lengthComputable) onProgress(event.loaded / event.total);
+    });
+    reader.addEventListener("load", () => {
+      onProgress(1);
+      resolve(String(reader.result ?? ""));
+    });
+    reader.addEventListener("error", () => reject(reader.error));
+    reader.addEventListener("abort", () => reject(new Error("File read aborted")));
+    reader.readAsText(file);
+  });
+}
+
 export default function WorkshopPage() {
   const [records, setRecords] = useState<WorkshopRecord[]>([]);
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
@@ -46,6 +65,8 @@ export default function WorkshopPage() {
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
   const [band, setBand] = useState("All");
   const [mode, setMode] = useState("All");
+  const [stationCall, setStationCall] = useState("All");
+  const [operatorCall, setOperatorCall] = useState("All");
   const [source, setSource] = useState("All");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -63,6 +84,10 @@ export default function WorkshopPage() {
   );
   const [error, setError] = useState("");
   const [isDragging, setIsDragging] = useState(false);
+  const [importProgress, setImportProgress] = useState<{
+    percent: number;
+    label: string;
+  } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const fields = useMemo(() => allFieldNames(records), [records]);
@@ -84,6 +109,26 @@ export default function WorkshopPage() {
   );
   const sources = useMemo(
     () => [...new Set(records.map((record) => record.source))].sort(),
+    [records],
+  );
+  const stationCalls = useMemo(
+    () =>
+      [
+        ...new Set(
+          records
+            .map((record) => record.fields.STATION_CALLSIGN)
+            .filter(Boolean),
+        ),
+      ].sort(),
+    [records],
+  );
+  const operatorCalls = useMemo(
+    () =>
+      [
+        ...new Set(
+          records.map((record) => record.fields.OPERATOR).filter(Boolean),
+        ),
+      ].sort(),
     [records],
   );
 
@@ -108,6 +153,9 @@ export default function WorkshopPage() {
           (showExcluded || !excluded.has(record.id)) &&
           (band === "All" || fields.BAND === band) &&
           (mode === "All" || fields.MODE === mode) &&
+          (stationCall === "All" ||
+            fields.STATION_CALLSIGN === stationCall) &&
+          (operatorCall === "All" || fields.OPERATOR === operatorCall) &&
           (source === "All" || record.source === source) &&
           (!dateFrom || (!!recordDate && recordDate >= dateFrom)) &&
           (!dateTo || (!!recordDate && recordDate <= dateTo)) &&
@@ -124,9 +172,11 @@ export default function WorkshopPage() {
       deferredSearch,
       excluded,
       mode,
+      operatorCall,
       records,
       showExcluded,
       source,
+      stationCall,
     ],
   );
   const retained = useMemo(
@@ -161,6 +211,7 @@ export default function WorkshopPage() {
   );
 
   async function importFiles(files: File[]) {
+    if (importProgress) return;
     setError("");
     const supported = files.filter((file) => /\.(adi|adif)$/i.test(file.name));
     if (!supported.length) {
@@ -174,28 +225,58 @@ export default function WorkshopPage() {
 
     try {
       const batch = Date.now().toString(36);
-      const imported = (
-        await Promise.all(
-          supported.map(async (file, index) =>
-            parseWorkshopAdif(
-              await file.text(),
-              file.name,
-              `${batch}-${index}`,
-            ),
-          ),
-        )
-      ).flat();
+      const imported: WorkshopRecord[] = [];
+      setImportProgress({ percent: 0, label: "Preparing import…" });
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+      for (let index = 0; index < supported.length; index += 1) {
+        const file = supported[index];
+        const fileStart = index / supported.length;
+        const fileShare = 1 / supported.length;
+        const update = (phase: number, label: string) => {
+          setImportProgress({
+            percent: Math.round((fileStart + fileShare * phase) * 100),
+            label,
+          });
+        };
+        const text = await readFileWithProgress(file, (progress) => {
+          update(
+            progress * 0.3,
+            `Reading ${file.name} (${index + 1} of ${supported.length})`,
+          );
+        });
+        const parsed = await parseWorkshopAdifAsync(
+          text,
+          file.name,
+          `${batch}-${index}`,
+          (progress) => {
+            update(
+              0.3 + progress * 0.7,
+              `Parsing ${file.name} · ${Math.round(progress * 100)}%`,
+            );
+          },
+        );
+        imported.push(...parsed);
+      }
       if (!imported.length) {
         setError("No ADIF QSO records were found in those files.");
+        setImportProgress(null);
         return;
       }
+      setImportProgress({ percent: 100, label: "Preparing QSO table…" });
       setRecords((current) => [...current, ...imported]);
       setPage(1);
       setMessage(
         `${imported.length.toLocaleString()} QSOs added from ${supported.length} file${supported.length === 1 ? "" : "s"}.`,
       );
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      });
+      setImportProgress(null);
     } catch {
       setError("One of the files could not be read as ADIF.");
+      setImportProgress(null);
     }
   }
 
@@ -243,6 +324,8 @@ export default function WorkshopPage() {
     setSearch("");
     setBand("All");
     setMode("All");
+    setStationCall("All");
+    setOperatorCall("All");
     setSource("All");
     setDateFrom("");
     setDateTo("");
@@ -297,12 +380,25 @@ export default function WorkshopPage() {
           <button
             className="button button-primary"
             type="button"
+            disabled={!!importProgress}
             onClick={() => fileInput.current?.click()}
           >
-            Add ADIF files
+            {importProgress ? "Importing…" : "Add ADIF files"}
           </button>
         </div>
       </header>
+
+      {importProgress && (
+        <section className="workshop-import-progress" aria-live="polite">
+          <div>
+            <span>{importProgress.label}</span>
+            <strong>{importProgress.percent}%</strong>
+          </div>
+          <progress max="100" value={importProgress.percent}>
+            {importProgress.percent}%
+          </progress>
+        </section>
+      )}
 
       <section className="workshop-summary" aria-label="Workspace summary">
         <article>
@@ -356,6 +452,20 @@ export default function WorkshopPage() {
           <select value={mode} onChange={(event) => { setMode(event.target.value); setPage(1); }}>
             <option value="All">All modes</option>
             {modes.map((value) => <option key={value}>{value}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Station call</span>
+          <select value={stationCall} onChange={(event) => { setStationCall(event.target.value); setPage(1); }}>
+            <option value="All">All station calls</option>
+            {stationCalls.map((value) => <option key={value}>{value}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Operator</span>
+          <select value={operatorCall} onChange={(event) => { setOperatorCall(event.target.value); setPage(1); }}>
+            <option value="All">All operators</option>
+            {operatorCalls.map((value) => <option key={value}>{value}</option>)}
           </select>
         </label>
         <label>

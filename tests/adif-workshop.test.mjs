@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   duplicateKey,
   parseWorkshopAdif,
+  parseWorkshopAdifAsync,
   serializeWorkshopAdif,
 } from "../app/adif-workshop.ts";
 
@@ -21,6 +22,24 @@ test("parses headered and headerless ADIF without discarding extension fields", 
   assert.equal(headered[0].fields.CALL, "K1ABC");
   assert.equal(headered[0].fields.APP_HRD_NOTE, "test");
   assert.equal(headerless[0].fields.CALL, "W7XYZ");
+});
+
+test("asynchronous parsing reports progress while preserving records", async () => {
+  const progress = [];
+  const records = await parseWorkshopAdifAsync(
+    Array.from(
+      { length: 80 },
+      (_, index) =>
+        `<CALL:5>K${String(index).padStart(4, "0")} <QSO_DATE:8>20260728 <EOR>`,
+    ).join("\n"),
+    "large.adi",
+    "large",
+    (value) => progress.push(value),
+  );
+
+  assert.equal(records.length, 80);
+  assert.equal(progress.at(-1), 1);
+  assert.ok(progress.length > 1);
 });
 
 test("clean export can remove application fields without changing QSO count", () => {
