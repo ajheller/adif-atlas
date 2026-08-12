@@ -4,6 +4,7 @@ import {
   type ChangeEvent,
   type DragEvent,
   useDeferredValue,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -19,6 +20,11 @@ import {
   serializeWorkshopAdif,
   type WorkshopRecord,
 } from "../adif-workshop";
+import {
+  clearSharedAdif,
+  loadSharedAdif,
+  saveSharedAdif,
+} from "../adif-session";
 
 const PAGE_SIZE = 100;
 
@@ -89,6 +95,7 @@ export default function WorkshopPage() {
     label: string;
   } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const restoreStarted = useRef(false);
 
   const fields = useMemo(() => allFieldNames(records), [records]);
   const appFields = useMemo(
@@ -210,6 +217,40 @@ export default function WorkshopPage() {
     [cleanup, customFields, exportRecords],
   );
 
+  useEffect(() => {
+    if (restoreStarted.current) return;
+    restoreStarted.current = true;
+    void (async () => {
+      const stored = await loadSharedAdif();
+      if (!stored) return;
+      if (stored.workshop) {
+        setRecords(stored.workshop.records);
+        setExcluded(new Set(stored.workshop.excluded));
+        setMessage(
+          `${stored.workshop.records.length.toLocaleString()} QSOs restored from the local workspace.`,
+        );
+        return;
+      }
+      setImportProgress({ percent: 0, label: `Restoring ${stored.name}…` });
+      const restored = await parseWorkshopAdifAsync(
+        stored.text,
+        stored.name,
+        `restored-${stored.updatedAt}`,
+        (progress) => {
+          setImportProgress({
+            percent: Math.round(progress * 100),
+            label: `Restoring ${stored.name} · ${Math.round(progress * 100)}%`,
+          });
+        },
+      );
+      setRecords(restored);
+      setMessage(
+        `${restored.length.toLocaleString()} QSOs restored from the map.`,
+      );
+      setImportProgress(null);
+    })();
+  }, []);
+
   async function importFiles(files: File[]) {
     if (importProgress) return;
     setError("");
@@ -265,7 +306,16 @@ export default function WorkshopPage() {
         return;
       }
       setImportProgress({ percent: 100, label: "Preparing QSO table…" });
-      setRecords((current) => [...current, ...imported]);
+      const mergedRecords = [...records, ...imported];
+      setRecords(mergedRecords);
+      void saveSharedAdif({
+        text: serializeWorkshopAdif(mergedRecords, { cleanup: "lossless" }),
+        name: supported.length === 1 ? supported[0].name : "Merged ADIF log",
+        workshop: {
+          records: mergedRecords,
+          excluded: [...excluded],
+        },
+      });
       setPage(1);
       setMessage(
         `${imported.length.toLocaleString()} QSOs added from ${supported.length} file${supported.length === 1 ? "" : "s"}.`,
@@ -331,6 +381,21 @@ export default function WorkshopPage() {
     setDateTo("");
     setPage(1);
     setMessage("Workspace cleared.");
+    void clearSharedAdif();
+  }
+
+  async function openMap() {
+    if (records.length) {
+      await saveSharedAdif({
+        text: serializeWorkshopAdif(retained, { cleanup: "lossless" }),
+        name: sources.length === 1 ? sources[0] : "ADIF Workshop log",
+        workshop: {
+          records,
+          excluded: [...excluded],
+        },
+      });
+    }
+    window.location.href = mapHref();
   }
 
   return (
@@ -363,9 +428,7 @@ export default function WorkshopPage() {
           <button
             className="button button-secondary"
             type="button"
-            onClick={() => {
-              window.location.href = mapHref();
-            }}
+            onClick={() => void openMap()}
           >
             Map
           </button>

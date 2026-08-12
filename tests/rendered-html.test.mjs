@@ -121,6 +121,19 @@ test("filters by ADIF station and operator callsigns", async () => {
   assert.ok(page.includes('operatorCall === "All operators"'));
 });
 
+test("shares the active ADIF workspace between map and workshop", async () => {
+  const [mapPage, workshopPage] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/workshop/page.tsx", import.meta.url), "utf8"),
+  ]);
+
+  assert.ok(mapPage.includes("saveSharedAdif({ text, name: file.name })"));
+  assert.ok(mapPage.includes("loadSharedAdif()"));
+  assert.ok(workshopPage.includes("loadSharedAdif()"));
+  assert.ok(workshopPage.includes("await saveSharedAdif({"));
+  assert.ok(workshopPage.includes("void clearSharedAdif()"));
+});
+
 test("offers a QTH-centered azimuthal equidistant map", async () => {
   const [page, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),

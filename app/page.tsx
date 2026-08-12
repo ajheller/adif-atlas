@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import { serializeAdif } from "./adif";
+import { loadSharedAdif, saveSharedAdif } from "./adif-session";
 import {
   clusterProjectedItems,
   spreadOverlappingItems,
@@ -2846,6 +2847,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const restoreStarted = useRef(false);
 
   const bands = useMemo(
     () => [...new Set(qsos.map((qso) => qso.band))].sort(),
@@ -2917,6 +2919,37 @@ export default function Home() {
     if (!home && mapView === "azimuthal") setMapView("world");
   }, [home, mapView]);
 
+  useEffect(() => {
+    if (restoreStarted.current) return;
+    restoreStarted.current = true;
+    void (async () => {
+      const stored = await loadSharedAdif();
+      if (!stored?.text) return;
+      const { lookupDxcc } = await import("./dxcc-data");
+      const parsed = parseAdif(stored.text, lookupDxcc);
+      if (!parsed.qsos.length) return;
+      setQsos(parsed.qsos);
+      setHome(parsed.home);
+      setHomeGrid(parsed.homeGrid);
+      setSourceName(stored.name);
+      setTotalRecords(parsed.totalRecords);
+      setBand("All bands");
+      setMode("All modes");
+      setStationCall("All station calls");
+      setOperatorCall("All operators");
+      setDateFrom("");
+      setDateTo("");
+      setSearch("");
+      setSelected(parsed.qsos[0]);
+      const approximate = parsed.qsos.filter(
+        (qso) => qso.locatorSource === "entity",
+      ).length;
+      setMessage(
+        `${parsed.qsos.length.toLocaleString()} of ${parsed.totalRecords.toLocaleString()} QSOs restored locally${approximate ? ` · ${approximate.toLocaleString()} approximate` : ""}.`,
+      );
+    })();
+  }, []);
+
   const countries = new Set(qsos.map((qso) => qso.country)).size;
   const farthest = home
     ? Math.max(0, ...qsos.map((qso) => distanceKm(home, qso)))
@@ -2953,6 +2986,8 @@ export default function Home() {
         );
         return;
       }
+
+      await saveSharedAdif({ text, name: file.name });
 
       setQsos(parsed.qsos);
       setHome(parsed.home);
