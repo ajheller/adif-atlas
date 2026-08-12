@@ -1187,8 +1187,13 @@ function standaloneApp() {
   });
   document.getElementById("standalone-zoom-out")?.addEventListener("click", () => {
     mapZoom = Math.max(1, mapZoom / zoomFactor);
-    if (mapZoom === 1 && mapView.value === "azimuthal") {
-      mapCenter = { x: 500, y: 250 };
+    if (mapZoom === 1) {
+      mapCenter =
+        mapView.value === "azimuthal"
+          ? { x: 500, y: 250 }
+          : payload.home
+            ? { x: point(payload.home.lat, payload.home.lon).x, y: 250 }
+            : { x: 500, y: 250 };
     }
     updateView();
   });
@@ -1960,7 +1965,11 @@ function QsoMap({
   function changeZoom(nextZoom: number) {
     const level = Math.max(1, Math.min(MAX_MAP_ZOOM, nextZoom));
     setZoom(level);
-    setCenter((current) => clampCenter(current, level));
+    setCenter((current) =>
+      level === 1
+        ? { x: home ? project(home).x : 500, y: 250 }
+        : clampCenter(current, level),
+    );
   }
 
   function centerOnQso(qso: Qso) {

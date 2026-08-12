@@ -35,6 +35,14 @@ test("maps support deep zoom and center the wrapped world on the home longitude"
   assert.match(source, /OpenStreetMap<\/a> contributors/);
   assert.match(source, /viewBox="\$\{mapCenterX - 500\} 0 1000 500"/);
   assert.match(source, /\[-1000, 0, 1000\]\.map/);
+  assert.match(
+    source,
+    /level === 1\s*\? \{ x: home \? project\(home\)\.x : 500, y: 250 \}/,
+  );
+  assert.match(
+    source,
+    /mapZoom === 1[\s\S]*?payload\.home[\s\S]*?point\(payload\.home\.lat, payload\.home\.lon\)\.x/,
+  );
 });
 
 test("live and standalone maps provide high-contrast, toggleable paths", async () => {
