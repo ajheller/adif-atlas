@@ -644,11 +644,17 @@ h3 {
 
 .contact-arc {
   fill: none;
-  stroke: #c21f42;
+  stroke: #5c8ff0;
   stroke-linecap: round;
-  stroke-width: 2.35;
-  stroke-opacity: 0.9;
+  stroke-width: 1.85;
+  stroke-opacity: 0.74;
   vector-effect: non-scaling-stroke;
+}
+
+.osm-qso-overlay .contact-arc {
+  stroke: #165fbd;
+  stroke-width: 2;
+  stroke-opacity: 0.8;
 }
 
 .home-marker circle:first-child {
@@ -868,7 +874,7 @@ h3 {
 }
 
 .path-toggle.is-on span {
-  background: #ef6680;
+  background: #5c8ff0;
   box-shadow: 0 0 0 1px rgb(255 255 255 / 0.7);
 }
 

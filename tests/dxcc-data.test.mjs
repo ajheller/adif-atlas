@@ -58,5 +58,6 @@ test("live and standalone maps provide high-contrast, toggleable paths", async (
   assert.match(source, /aria-pressed=\{showPaths\}/);
   assert.match(source, /showPaths &&/);
   assert.match(styles, /\.path-toggle/);
-  assert.match(styles, /stroke: #c21f42/);
+  assert.match(styles, /stroke: #5c8ff0/);
+  assert.match(styles, /\.osm-qso-overlay \.contact-arc/);
 });
